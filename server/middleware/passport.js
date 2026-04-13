@@ -18,36 +18,38 @@ passport.use(new JwtStrategy(
   }
 ));
 
-// ── Google OAuth Strategy ─────────────────────────────────────────────
-passport.use(new GoogleStrategy(
-  {
-    clientID:     process.env.GOOGLE_CLIENT_ID,
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL:  process.env.GOOGLE_CALLBACK_URL,
-  },
-  async (accessToken, refreshToken, profile, done) => {
-    try {
-      const email = profile.emails?.[0]?.value;
-      if (!email) return done(new Error('No email from Google'), null);
+// ── Google OAuth Strategy (only if credentials are configured) ────────
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  passport.use(new GoogleStrategy(
+    {
+      clientID:     process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL:  process.env.GOOGLE_CALLBACK_URL,
+    },
+    async (accessToken, refreshToken, profile, done) => {
+      try {
+        const email = profile.emails?.[0]?.value;
+        if (!email) return done(new Error('No email from Google'), null);
 
-      let user = await User.findOne({ $or: [{ googleId: profile.id }, { email }] });
+        let user = await User.findOne({ $or: [{ googleId: profile.id }, { email }] });
 
-      if (!user) {
-        user = await User.create({
-          googleId:        profile.id,
-          name:            profile.displayName,
-          email,
-          avatar:          profile.photos?.[0]?.value,
-          isEmailVerified: true,
-        });
-      } else if (!user.googleId) {
-        user.googleId = profile.id;
-        user.isEmailVerified = true;
-        if (!user.avatar) user.avatar = profile.photos?.[0]?.value;
-        await user.save({ validateBeforeSave: false });
-      }
+        if (!user) {
+          user = await User.create({
+            googleId:        profile.id,
+            name:            profile.displayName,
+            email,
+            avatar:          profile.photos?.[0]?.value,
+            isEmailVerified: true,
+          });
+        } else if (!user.googleId) {
+          user.googleId = profile.id;
+          user.isEmailVerified = true;
+          if (!user.avatar) user.avatar = profile.photos?.[0]?.value;
+          await user.save({ validateBeforeSave: false });
+        }
 
-      return done(null, user);
-    } catch (err) { return done(err, null); }
-  }
-));
+        return done(null, user);
+      } catch (err) { return done(err, null); }
+    }
+  ));
+}
