@@ -1,4 +1,5 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+require('dotenv').config(); // fallback: load .env from current dir (production)
 const express      = require('express');
 const mongoose     = require('mongoose');
 const cors         = require('cors');

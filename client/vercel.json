@@ -22,7 +22,5 @@
       ]
     }
   ],
-  "env": {
-    "VITE_API_URL": "https://api.shipsplit.in"
-  }
+  "env": {}
 }
