@@ -95,6 +95,7 @@ app.use(errorHandler);
 // ── Database & startup ────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 
+console.log('MONGODB_URI set:', !!process.env.MONGODB_URI, '| starts with:', process.env.MONGODB_URI?.substring(0, 20));
 mongoose
   .connect(process.env.MONGODB_URI)
   .then(() => {
@@ -105,7 +106,7 @@ mongoose
     );
   })
   .catch((err) => {
-    logger.error('MongoDB connection failed:', err.message);
+    console.error('MongoDB connection failed:', err.message, err.stack);
     process.exit(1);
   });
 

@@ -7,6 +7,13 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Attach stored token to every request
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('accessToken');
+  if (token) config.headers['Authorization'] = `Bearer ${token}`;
+  return config;
+});
+
 /* ── Response interceptor ────────────────────────────────────────────
    The backend wraps every response in { success, message, data, meta }.
    This interceptor unwraps it so every caller gets the inner `data`

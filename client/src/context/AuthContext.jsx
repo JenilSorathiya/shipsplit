@@ -24,18 +24,21 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     const { data } = await api.post('/auth/login', { email, password });
+    if (data.accessToken) localStorage.setItem('accessToken', data.accessToken);
     setUser(data.user);
     return data;
   };
 
   const register = async (name, email, password, phone) => {
     const { data } = await api.post('/auth/register', { name, email, password, phone });
+    if (data.accessToken) localStorage.setItem('accessToken', data.accessToken);
     setUser(data.user);
     return data;
   };
 
   const logout = async () => {
     await api.post('/auth/logout');
+    localStorage.removeItem('accessToken');
     setUser(null);
   };
 
