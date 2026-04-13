@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Build output
+client/dist/
+client/build/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
+
+# Uploads / temp (never commit user data or generated files)
+server/uploads/
+uploads/
+server/logs/
+logs/
+
+# SSL certs (never commit)
+certs/
+*.pem
+*.key
+*.crt
+
+# PM2
+.pm2/
+
+# Test artifacts
+coverage/
+

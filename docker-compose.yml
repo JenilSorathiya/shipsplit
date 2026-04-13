@@ -1,0 +1,103 @@
+version: '3.9'
+
+services:
+  # ── MongoDB ──────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7
+    container_name: shipsplit-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-changeme}
+      MONGO_INITDB_DATABASE: shipsplit
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - shipsplit-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (optional caching) ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: shipsplit-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - shipsplit-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Backend (Node/Express) ────────────────────────────────────────────
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: shipsplit-backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env.production
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-admin}:${MONGO_ROOT_PASS:-changeme}@mongo:27017/shipsplit?authSource=admin
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - shipsplit-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Frontend (Nginx serving React build) ────────────────────────────
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: shipsplit-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - shipsplit-net
+
+  # ── Nginx reverse proxy ───────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: shipsplit-nginx
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro          # Mount SSL certs here
+    networks:
+      - shipsplit-net
+
+networks:
+  shipsplit-net:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  redis_data:
+  uploads_data:
