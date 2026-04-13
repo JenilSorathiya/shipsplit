@@ -96,7 +96,7 @@ app.use(errorHandler);
 // ── Database & startup ────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 
-console.log('MONGODB_URI set:', !!process.env.MONGODB_URI, '| starts with:', process.env.MONGODB_URI?.substring(0, 20));
+console.log('ENV CHECK → JWT_SECRET:', !!process.env.JWT_SECRET, '| ENCRYPT_KEY:', !!process.env.ENCRYPT_KEY, '| MONGODB_URI:', !!process.env.MONGODB_URI);
 mongoose
   .connect(process.env.MONGODB_URI)
   .then(() => {
