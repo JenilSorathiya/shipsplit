@@ -33,10 +33,24 @@ app.use(helmet());
 app.use(mongoSanitize());
 
 // ── CORS ───────────────────────────────────────────────────────────────
+const ALLOWED_ORIGINS = [
+  process.env.CLIENT_URL,
+  'http://localhost:3000',
+  'http://localhost:5173',
+].filter(Boolean);
+
 app.use(cors({
-  origin:      process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, Postman)
+    if (!origin) return callback(null, true);
+    // Allow exact match or any Vercel preview URL for this project
+    const isAllowed = ALLOWED_ORIGINS.includes(origin) ||
+      /^https:\/\/shipsplitt.*\.vercel\.app$/.test(origin);
+    if (isAllowed) return callback(null, true);
+    callback(new Error(`CORS blocked: ${origin}`));
+  },
   credentials: true,
-  methods:     ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 }));
 
 // ── Webhook route needs raw body — register BEFORE express.json() ─────
