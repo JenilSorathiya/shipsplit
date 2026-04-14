@@ -1,5 +1,18 @@
+// Load .env in development; in production Render injects env vars directly
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
+}
+
+// ── Required env var check ────────────────────────────────────────────
+const REQUIRED = ['MONGODB_URI', 'JWT_SECRET'];
+const missing  = REQUIRED.filter(k => !process.env[k]);
+if (missing.length) {
+  console.error('FATAL: Missing required environment variables:', missing.join(', '));
+  process.exit(1);
+}
+// JWT_REFRESH_SECRET falls back to JWT_SECRET if not set
+if (!process.env.JWT_REFRESH_SECRET) {
+  process.env.JWT_REFRESH_SECRET = process.env.JWT_SECRET;
 }
 const express      = require('express');
 const mongoose     = require('mongoose');
@@ -22,6 +35,8 @@ const reportRoutes       = require('./routes/reports.routes');
 const settingsRoutes     = require('./routes/settings.routes');
 const subscriptionRoutes = require('./routes/subscription.routes');
 const platformRoutes     = require('./routes/platforms.routes');
+const returnsRoutes        = require('./routes/returns.routes');
+const remittancesRoutes    = require('./routes/remittances.routes');
 
 // ── Middleware ────────────────────────────────────────────────────────
 const errorHandler = require('./middleware/errorHandler.middleware');
@@ -69,6 +84,8 @@ app.use('/api/reports',      reportRoutes);
 app.use('/api/settings',     settingsRoutes);
 app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/platforms',    platformRoutes);
+app.use('/api/returns',      returnsRoutes);
+app.use('/api/remittances',  remittancesRoutes);
 
 // ── Static: serve generated label PDFs & ZIPs ────────────────────
 app.use('/uploads', express.static(require('path').join(__dirname, 'uploads'), {
@@ -96,7 +113,6 @@ app.use(errorHandler);
 // ── Database & startup ────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 
-console.log('ENV CHECK → JWT_SECRET:', !!process.env.JWT_SECRET, '| ENCRYPT_KEY:', !!process.env.ENCRYPT_KEY, '| MONGODB_URI:', !!process.env.MONGODB_URI);
 mongoose
   .connect(process.env.MONGODB_URI)
   .then(() => {

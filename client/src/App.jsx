@@ -17,6 +17,9 @@ const LabelGeneratorPage = lazy(() => import('./pages/LabelGeneratorPage'));
 const ReportsPage        = lazy(() => import('./pages/ReportsPage'));
 const SettingsPage       = lazy(() => import('./pages/SettingsPage'));
 const BillingPage        = lazy(() => import('./pages/BillingPage'));
+const PrivacyPage        = lazy(() => import('./pages/PrivacyPage'));
+const ReturnsPage        = lazy(() => import('./pages/ReturnsPage'));
+const PaymentsPage       = lazy(() => import('./pages/PaymentsPage'));
 
 /* ── Full-page loading spinner ───────────────────────────────────────── */
 function PageLoader() {
@@ -59,6 +62,7 @@ export default function App() {
         <Route path="/login"         element={<GuestRoute><LoginPage /></GuestRoute>} />
         <Route path="/register"      element={<GuestRoute><RegisterPage /></GuestRoute>} />
         <Route path="/auth/callback" element={<OAuthCallbackPage />} />
+        <Route path="/privacy"       element={<PrivacyPage />} />
 
         {/* ── Protected dashboard ────────────────── */}
         <Route
@@ -68,6 +72,8 @@ export default function App() {
           <Route index                  element={<DashboardPage />} />
           <Route path="orders"          element={<OrdersPage />} />
           <Route path="label-generator" element={<LabelGeneratorPage />} />
+          <Route path="returns"         element={<ReturnsPage />} />
+          <Route path="payments"        element={<PaymentsPage />} />
           <Route path="reports"         element={<ReportsPage />} />
           <Route path="settings"        element={<SettingsPage />} />
           <Route path="billing"         element={<BillingPage />} />

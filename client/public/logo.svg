@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="150" viewBox="0 0 150 150">
+  <!-- Background circle -->
+  <rect width="150" height="150" rx="28" fill="#4F46E5"/>
+
+  <!-- Box/package icon -->
+  <g transform="translate(25, 22)">
+    <!-- Top face of box -->
+    <polygon points="50,8 92,28 50,48 8,28" fill="#818CF8"/>
+    <!-- Left face -->
+    <polygon points="8,28 50,48 50,88 8,68" fill="#3730A3"/>
+    <!-- Right face -->
+    <polygon points="92,28 50,48 50,88 92,68" fill="#6366F1"/>
+    <!-- Center line on top -->
+    <line x1="50" y1="8" x2="50" y2="48" stroke="#C7D2FE" stroke-width="2.5" opacity="0.7"/>
+    <!-- Split lines (the "split" concept) -->
+    <line x1="8" y1="48" x2="50" y2="68" stroke="#A5B4FC" stroke-width="2" stroke-dasharray="5,3" opacity="0.8"/>
+    <line x1="92" y1="48" x2="50" y2="68" stroke="#A5B4FC" stroke-width="2" stroke-dasharray="5,3" opacity="0.8"/>
+  </g>
+
+  <!-- Text: ShipSplit -->
+  <text x="75" y="128" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="white" text-anchor="middle" letter-spacing="1">ShipSplit</text>
+</svg>

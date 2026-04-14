@@ -7,18 +7,23 @@ import {
   Bars3Icon, XMarkIcon, BellIcon, ChevronDownIcon,
   ArrowRightOnRectangleIcon, UserCircleIcon, CreditCardIcon,
   MagnifyingGlassIcon, QuestionMarkCircleIcon,
+  ArrowUturnLeftIcon, BanknotesIcon,
 } from '@heroicons/react/24/outline';
 import { HomeIcon as HomeIconSolid, ShoppingBagIcon as ShoppingBagSolid,
   TagIcon as TagSolid, ChartBarIcon as ChartBarSolid,
-  Cog6ToothIcon as CogSolid, CreditCardIcon as CreditCardSolid } from '@heroicons/react/24/solid';
+  Cog6ToothIcon as CogSolid, CreditCardIcon as CreditCardSolid,
+  ArrowUturnLeftIcon as ReturnSolid, BanknotesIcon as BanknotesSolid,
+} from '@heroicons/react/24/solid';
 
 const NAV = [
-  { to: '/dashboard',                 label: 'Dashboard',        icon: HomeIcon,         iconActive: HomeIconSolid },
-  { to: '/dashboard/orders',          label: 'Orders',           icon: ShoppingBagIcon,  iconActive: ShoppingBagSolid },
-  { to: '/dashboard/label-generator', label: 'Label Generator',  icon: TagIcon,          iconActive: TagSolid },
-  { to: '/dashboard/reports',         label: 'Reports',          icon: ChartBarIcon,     iconActive: ChartBarSolid },
-  { to: '/dashboard/billing',         label: 'Billing',          icon: CreditCardIcon,   iconActive: CreditCardSolid },
-  { to: '/dashboard/settings',        label: 'Settings',         icon: Cog6ToothIcon,    iconActive: CogSolid },
+  { to: '/dashboard',                 label: 'Dashboard',        icon: HomeIcon,              iconActive: HomeIconSolid },
+  { to: '/dashboard/orders',          label: 'Orders',           icon: ShoppingBagIcon,       iconActive: ShoppingBagSolid },
+  { to: '/dashboard/label-generator', label: 'Label Generator',  icon: TagIcon,               iconActive: TagSolid },
+  { to: '/dashboard/returns',         label: 'Returns',          icon: ArrowUturnLeftIcon,    iconActive: ReturnSolid },
+  { to: '/dashboard/payments',        label: 'Payments',         icon: BanknotesIcon,         iconActive: BanknotesSolid },
+  { to: '/dashboard/reports',         label: 'Reports',          icon: ChartBarIcon,          iconActive: ChartBarSolid },
+  { to: '/dashboard/billing',         label: 'Billing',          icon: CreditCardIcon,        iconActive: CreditCardSolid },
+  { to: '/dashboard/settings',        label: 'Settings',         icon: Cog6ToothIcon,         iconActive: CogSolid },
 ];
 
 const PLATFORM_OPTIONS = [
