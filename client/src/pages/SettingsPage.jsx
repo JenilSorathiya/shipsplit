@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import api from '../utils/api';
+import toast from 'react-hot-toast';
 import {
   UserCircleIcon, LinkIcon, TruckIcon, TagIcon,
   CreditCardIcon, UsersIcon, CheckCircleIcon,
@@ -218,52 +220,129 @@ function ProfileTab({ user }) {
 
 /* ── Platforms tab ───────────────────────────────────── */
 function PlatformsTab() {
-  const [platforms, setPlatforms] = useState(PLATFORMS);
-  const toggle = (id) => setPlatforms((ps) => ps.map((p) => p.id === id ? { ...p, connected: !p.connected, email: p.connected ? null : `seller@${id}.com` } : p));
+  const [statuses, setStatuses] = useState({});
+  const [loading,  setLoading]  = useState(true);
+  const [syncing,  setSyncing]  = useState({});
+
+  // Check connection status for each platform
+  useEffect(() => {
+    const fetchStatuses = async () => {
+      setLoading(true);
+      const results = {};
+      await Promise.allSettled(
+        PLATFORMS.map(async (p) => {
+          try {
+            const { data } = await api.get(`/platforms/${p.id}`);
+            results[p.id] = data?.platform ?? data ?? {};
+          } catch {
+            results[p.id] = { isConnected: false };
+          }
+        })
+      );
+      setStatuses(results);
+      setLoading(false);
+    };
+    fetchStatuses();
+
+    // If redirected back after Amazon OAuth, show success
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('connected') === 'amazon') {
+      toast.success('Amazon connected successfully!');
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  const handleConnect = async (platformId) => {
+    if (platformId === 'amazon') {
+      try {
+        const { data } = await api.get('/platforms/amazon/oauth-url');
+        window.location.href = data.url ?? data.oauthUrl ?? data;
+      } catch {
+        toast.error('Failed to get Amazon OAuth URL. Check your API credentials in Render.');
+      }
+    } else {
+      toast('Coming soon! Only Amazon is available right now.', { icon: '🔜' });
+    }
+  };
+
+  const handleDisconnect = async (platformId) => {
+    if (!window.confirm(`Disconnect ${platformId}? Your synced orders will remain.`)) return;
+    try {
+      await api.delete(`/platforms/${platformId}`);
+      setStatuses((prev) => ({ ...prev, [platformId]: { isConnected: false } }));
+      toast.success(`${platformId} disconnected.`);
+    } catch {
+      toast.error('Failed to disconnect. Try again.');
+    }
+  };
+
+  const handleSync = async (platformId) => {
+    setSyncing((prev) => ({ ...prev, [platformId]: true }));
+    try {
+      await api.post(`/platforms/${platformId}/sync`);
+      toast.success('Sync started! Orders will update shortly.');
+    } catch {
+      toast.error('Sync failed. Please try again.');
+    } finally {
+      setSyncing((prev) => ({ ...prev, [platformId]: false }));
+    }
+  };
 
   return (
     <div className="space-y-3">
-      {platforms.map((p) => (
-        <div key={p.id} className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all
-          ${p.connected ? 'border-success-200 bg-success-50/30' : 'border-gray-200 bg-white'}`}>
-          {/* Logo */}
-          <div className={`h-11 w-11 rounded-xl ${p.bg} flex items-center justify-center text-white font-bold text-sm flex-shrink-0 shadow-sm`}>
-            {p.name[0]}
-          </div>
+      {PLATFORMS.map((p) => {
+        const status     = statuses[p.id] ?? {};
+        const isConnected = status.isConnected ?? false;
 
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-gray-900">{p.name}</span>
-              {p.connected
-                ? <span className="badge-green text-2xs">Connected</span>
-                : <span className="badge-gray text-2xs">Not Connected</span>}
+        return (
+          <div key={p.id} className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all
+            ${isConnected ? 'border-success-200 bg-success-50/30' : 'border-gray-200 bg-white'}`}>
+            <div className={`h-11 w-11 rounded-xl ${p.bg} flex items-center justify-center text-white font-bold text-sm flex-shrink-0 shadow-sm`}>
+              {p.name[0]}
             </div>
-            {p.connected ? (
-              <div className="mt-0.5">
-                <p className="text-xs text-gray-500">{p.email}</p>
-                <p className="text-2xs text-gray-400 mt-0.5">Last sync: {p.lastSync} · {p.orders.toLocaleString('en-IN')} orders</p>
-              </div>
-            ) : (
-              <p className="text-xs text-gray-400 mt-0.5">Connect your {p.name} seller account</p>
-            )}
-          </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {p.connected && (
-              <button className="btn-ghost btn-sm text-gray-400 gap-1.5">
-                <ArrowPathIcon className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Sync</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-gray-900">{p.name}</span>
+                {loading ? (
+                  <div className="h-4 w-16 bg-gray-100 rounded animate-pulse" />
+                ) : isConnected ? (
+                  <span className="badge-green text-2xs">Connected</span>
+                ) : (
+                  <span className="badge-gray text-2xs">Not Connected</span>
+                )}
+              </div>
+              {isConnected ? (
+                <p className="text-2xs text-gray-400 mt-0.5">
+                  Last sync: {status.lastSyncedAt ? new Date(status.lastSyncedAt).toLocaleString('en-IN') : 'Never'}
+                </p>
+              ) : (
+                <p className="text-xs text-gray-400 mt-0.5">Connect your {p.name} seller account</p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {isConnected && (
+                <button
+                  onClick={() => handleSync(p.id)}
+                  disabled={syncing[p.id]}
+                  className="btn-ghost btn-sm text-gray-400 gap-1.5"
+                >
+                  <ArrowPathIcon className={`h-3.5 w-3.5 ${syncing[p.id] ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">Sync</span>
+                </button>
+              )}
+              <button
+                onClick={() => isConnected ? handleDisconnect(p.id) : handleConnect(p.id)}
+                disabled={loading}
+                className={isConnected ? 'btn-secondary btn-sm text-red-600 border-red-200 hover:bg-red-50' : 'btn-primary btn-sm'}
+              >
+                {isConnected ? 'Disconnect' : 'Connect'}
               </button>
-            )}
-            <button
-              onClick={() => toggle(p.id)}
-              className={p.connected ? 'btn-secondary btn-sm text-red-600 border-red-200 hover:bg-red-50' : 'btn-primary btn-sm'}
-            >
-              {p.connected ? 'Disconnect' : 'Connect'}
-            </button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       <div className="flex items-start gap-3 p-4 bg-primary-50 rounded-xl border border-primary-100">
         <ShieldCheckIcon className="h-5 w-5 text-primary-600 flex-shrink-0 mt-0.5" />
