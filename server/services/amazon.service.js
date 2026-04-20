@@ -176,9 +176,17 @@ async function spRequest({ platform, method, path, params = {}, body = null }) {
  * `state` is a random UUID stored in Platform.metadata.oauthState before redirect.
  */
 exports.buildOAuthUrl = (state) => {
-  const appId  = process.env.AMAZON_APP_ID || process.env.AMAZON_CLIENT_ID;
-  const params = new URLSearchParams({ application_id: appId, state, version: 'beta' });
-  // For India. For global: sellercentral.amazon.com
+  // application_id = SP-API App ID (amzn1.sp.solution.xxx), NOT the LWA Client ID
+  const appId      = process.env.AMAZON_APP_ID;
+  const redirectUri = process.env.AMAZON_REDIRECT_URI ||
+    'https://shipsplit.onrender.com/api/platforms/amazon/callback';
+
+  const params = new URLSearchParams({
+    application_id: appId,
+    state,
+    version:      'beta',
+    redirect_uri: redirectUri,
+  });
   return `https://sellercentral.amazon.in/apps/authorize/consent?${params}`;
 };
 
