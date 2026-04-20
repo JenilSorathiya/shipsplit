@@ -165,7 +165,7 @@ function buildTimeline(payments) {
     return d;
   });
 
-  return days.map((d) => {
+  return days.map((d, i) => {
     const iso = d.toISOString().slice(0, 10);
     const dayPayments = payments.filter((p) => {
       const scheduled = p.scheduledDate ?? p.scheduled_date ?? p.date ?? '';
