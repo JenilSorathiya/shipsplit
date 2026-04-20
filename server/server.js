@@ -44,6 +44,9 @@ const { apiLimiter } = require('./middleware/rateLimiter.middleware');
 
 const app = express();
 
+// ── Trust proxy (required for Render/Heroku deployments) ──────────────
+app.set('trust proxy', 1);
+
 // ── Security ──────────────────────────────────────────────────────────
 app.use(helmet());
 app.use(mongoSanitize());
