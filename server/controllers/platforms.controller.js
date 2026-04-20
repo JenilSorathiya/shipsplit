@@ -53,11 +53,11 @@ exports.handleAmazonCallback = async (req, res, next) => {
 
     if (error) {
       logger.warn(`Amazon OAuth denied: ${error} — ${error_description}`);
-      return res.redirect(`${CLIENT_URL()}/settings?tab=platforms&error=amazon_rejected`);
+      return res.redirect(`${CLIENT_URL()}/dashboard/settings?tab=platforms&error=amazon_rejected`);
     }
 
     if (!spapi_oauth_code || !state) {
-      return res.redirect(`${CLIENT_URL()}/settings?tab=platforms&error=missing_params`);
+      return res.redirect(`${CLIENT_URL()}/dashboard/settings?tab=platforms&error=missing_params`);
     }
 
     // Find Platform by the state token we issued
@@ -67,7 +67,7 @@ exports.handleAmazonCallback = async (req, res, next) => {
 
     if (!platform) {
       logger.warn(`Amazon callback: state not found or expired — ${state}`);
-      return res.redirect(`${CLIENT_URL()}/settings?tab=platforms&error=invalid_state`);
+      return res.redirect(`${CLIENT_URL()}/dashboard/settings?tab=platforms&error=invalid_state`);
     }
 
     // Exchange auth code for LWA tokens
@@ -87,10 +87,10 @@ exports.handleAmazonCallback = async (req, res, next) => {
     await platform.save();
 
     logger.info(`Amazon connected — user ${platform.userId}, seller ${selling_partner_id}`);
-    res.redirect(`${CLIENT_URL()}/settings?tab=platforms&connected=amazon`);
+    res.redirect(`${CLIENT_URL()}/dashboard/settings?tab=platforms&connected=amazon`);
   } catch (err) {
     logger.error('Amazon OAuth callback error:', err.message);
-    res.redirect(`${CLIENT_URL()}/settings?tab=platforms&error=oauth_failed`);
+    res.redirect(`${CLIENT_URL()}/dashboard/settings?tab=platforms&error=oauth_failed`);
   }
 };
 
