@@ -177,15 +177,11 @@ async function spRequest({ platform, method, path, params = {}, body = null }) {
  */
 exports.buildOAuthUrl = (state) => {
   // application_id = SP-API App ID (amzn1.sp.solution.xxx), NOT the LWA Client ID
-  const appId      = process.env.AMAZON_APP_ID;
-  const redirectUri = process.env.AMAZON_REDIRECT_URI ||
-    'https://shipsplit.onrender.com/api/platforms/amazon/callback';
-
+  const appId = process.env.AMAZON_APP_ID;
   const params = new URLSearchParams({
     application_id: appId,
     state,
-    version:      'beta',
-    redirect_uri: redirectUri,
+    version: 'beta',
   });
   return `https://sellercentral.amazon.in/apps/authorize/consent?${params}`;
 };

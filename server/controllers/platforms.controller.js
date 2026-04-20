@@ -49,6 +49,8 @@ exports.getOAuthUrl = async (req, res, next) => {
 /* ── GET /platforms/amazon/callback  (public — Amazon redirects here) ── */
 exports.handleAmazonCallback = async (req, res, next) => {
   try {
+    // Log all query params to debug
+    console.log('Amazon callback received:', JSON.stringify(req.query));
     const { spapi_oauth_code, selling_partner_id, state, error, error_description } = req.query;
 
     if (error) {
