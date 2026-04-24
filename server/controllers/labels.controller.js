@@ -4,6 +4,8 @@ const fs          = require('fs');
 const fsp         = require('fs/promises');
 const path        = require('path');
 const { v4: uuidv4 } = require('uuid');
+const archiver    = require('archiver');
+const { PDFDocument } = require('pdf-lib');
 
 const Label     = require('../models/Label.model');
 const Order     = require('../models/Order.model');
@@ -370,6 +372,312 @@ exports.mergeLabels = async (req, res, next) => {
       'Content-Length':      merged.length,
     });
     res.send(merged);
+  } catch (err) { next(err); }
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   Courier & platform detection constants
+══════════════════════════════════════════════════════════════════ */
+const COURIER_PATTERNS = {
+  'Delhivery':  [/delhivery/i, /dlv/i],
+  'Ekart':      [/ekart/i, /ekt/i, /flipkart\s*log/i],
+  'Bluedart':   [/blue\s*dart/i, /bluedart/i, /bdt/i],
+  'DTDC':       [/dtdc/i],
+  'XpressBees': [/xpress\s*bees/i, /xpressbees/i, /xb/i],
+  'Shadowfax':  [/shadowfax/i, /sfx/i],
+  'Shiprocket': [/shiprocket/i],
+  'Valmo':      [/valmo/i],
+  'Amazon':     [/amazon\s*log/i, /amzl/i, /amazon\s*shipping/i],
+  'Ecom':       [/ecom\s*express/i, /ecom\s*exp/i],
+  'Smartr':     [/smartr/i],
+};
+
+const PLATFORM_PATTERNS = {
+  amazon:   { sku: /SKU[:\s]+([A-Z0-9\-_]+)/i,  product: /^\s*(.{10,60})\s*$/m, orderId: /\d{3}-\d{7}-\d{7}/ },
+  flipkart: { sku: /FSN[:\s]+([A-Z0-9]+)/i,      product: /Item[:\s]+(.+)/i,     orderId: /OD\d{12}/ },
+  meesho:   { sku: /SKU[:\s]+([^\n]+)/i,          product: /Product[:\s]+(.+)/i,  orderId: /\d{10,12}/ },
+  myntra:   { sku: /Style\s*ID[:\s]+(\d+)/i,      product: /Style[:\s]+(.+)/i,    orderId: /\d{8,10}/ },
+};
+
+/* ── PDF text extraction helper ──────────────────────────────────── */
+function extractTextFromPDFBuffer(pdfBuffer) {
+  // Extract raw text from PDF binary using BT/ET stream markers
+  const raw = pdfBuffer.toString('latin1');
+  const texts = [];
+
+  // Extract text between BT and ET markers
+  const btEtRegex = /BT([\s\S]*?)ET/g;
+  let match;
+  while ((match = btEtRegex.exec(raw)) !== null) {
+    const block = match[1];
+
+    // Handle (text)Tj  and  (text)'  and  (text)"
+    const tjRegex = /\(([^)\\]*(?:\\.[^)\\]*)*)\)\s*(?:Tj|'|")/g;
+    let tjMatch;
+    while ((tjMatch = tjRegex.exec(block)) !== null) {
+      const decoded = tjMatch[1]
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t')
+        .replace(/\\\\/g, '\\')
+        .replace(/\\\(/g, '(')
+        .replace(/\\\)/g, ')');
+      if (decoded.trim()) texts.push(decoded.trim());
+    }
+
+    // Handle [(text)]TJ  array form
+    const tjArrRegex = /\[([^\]]+)\]\s*TJ/g;
+    let arrMatch;
+    while ((arrMatch = tjArrRegex.exec(block)) !== null) {
+      const inner = arrMatch[1];
+      const strRegex = /\(([^)\\]*(?:\\.[^)\\]*)*)\)/g;
+      let sMatch;
+      while ((sMatch = strRegex.exec(inner)) !== null) {
+        const decoded = sMatch[1]
+          .replace(/\\n/g, '\n').replace(/\\r/g, '\r')
+          .replace(/\\t/g, '\t').replace(/\\\\/g, '\\')
+          .replace(/\\\(/g, '(').replace(/\\\)/g, ')');
+        if (decoded.trim()) texts.push(decoded.trim());
+      }
+    }
+  }
+
+  return texts.join(' ');
+}
+
+/* ── Detect courier from page text ──────────────────────────────── */
+function detectCourier(text) {
+  for (const [courier, patterns] of Object.entries(COURIER_PATTERNS)) {
+    for (const pattern of patterns) {
+      if (pattern.test(text)) return courier;
+    }
+  }
+  return 'Unknown';
+}
+
+/* ── Detect product/SKU from page text ──────────────────────────── */
+function detectProduct(text, platform) {
+  const patterns = PLATFORM_PATTERNS[platform] || PLATFORM_PATTERNS.amazon;
+
+  // Try SKU first
+  const skuMatch = patterns.sku.exec(text);
+  if (skuMatch) return skuMatch[1].trim().slice(0, 60);
+
+  // Try product name
+  const productMatch = patterns.product.exec(text);
+  if (productMatch) return productMatch[1].trim().slice(0, 60);
+
+  // Try orderId as fallback label
+  const orderMatch = patterns.orderId.exec(text);
+  if (orderMatch) return `Order-${orderMatch[0]}`;
+
+  return 'Unknown-Product';
+}
+
+/* ── Sanitize name for use as filename/folder ────────────────────── */
+function sanitizeName(name) {
+  return name.replace(/[^a-zA-Z0-9\-_.() ]/g, '_').trim().slice(0, 50) || 'Unknown';
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   POST /labels/split-upload
+   Upload a bulk PDF → detect couriers & products → create ZIP
+══════════════════════════════════════════════════════════════════ */
+exports.splitUploadedPDF = async (req, res, next) => {
+  const tempFiles = [];
+  try {
+    if (!req.file) return next(AppError.badRequest('PDF file is required'));
+
+    const platform = (req.body.platform || 'amazon').toLowerCase();
+    const splitId  = uuidv4();
+
+    // Ensure output directories exist
+    const splitsDir = path.join(process.cwd(), 'uploads', 'splits');
+    const tempDir   = path.join(process.cwd(), 'uploads', 'temp');
+    fs.mkdirSync(splitsDir, { recursive: true });
+    fs.mkdirSync(tempDir,   { recursive: true });
+
+    // 1. Load the uploaded PDF
+    const pdfBytes = await fsp.readFile(req.file.path);
+    tempFiles.push(req.file.path);
+
+    const srcPdf    = await PDFDocument.load(pdfBytes);
+    const pageCount = srcPdf.getPageCount();
+
+    if (pageCount === 0) return next(AppError.badRequest('PDF has no pages'));
+    if (pageCount > 500) return next(AppError.badRequest('PDF too large — max 500 pages'));
+
+    // 2. Process each page: extract text, detect courier & product, split into individual PDFs
+    const pages = [];
+    for (let i = 0; i < pageCount; i++) {
+      // Extract a single-page PDF buffer so we can do text extraction on the raw bytes
+      const singlePdf  = await PDFDocument.create();
+      const [copiedPage] = await singlePdf.copyPagesFrom(srcPdf, [i]);
+      singlePdf.addPage(copiedPage);
+      const pageBytes = await singlePdf.save();
+
+      // Extract text from the page buffer
+      const pageText = extractTextFromPDFBuffer(Buffer.from(pageBytes));
+
+      const courier = detectCourier(pageText);
+      const product = detectProduct(pageText, platform);
+
+      // Save individual page PDF to temp
+      const pageFileName = `label_${String(i + 1).padStart(3, '0')}.pdf`;
+      const pageTempPath = path.join(tempDir, `${splitId}_${pageFileName}`);
+      await fsp.writeFile(pageTempPath, pageBytes);
+      tempFiles.push(pageTempPath);
+
+      pages.push({ index: i, fileName: pageFileName, courier, product, pageBytes });
+    }
+
+    // 3. Build courier and product summary maps
+    const courierMap = {};
+    const productMap = {};
+    for (const pg of pages) {
+      courierMap[pg.courier] = (courierMap[pg.courier] || 0) + 1;
+      productMap[pg.product] = (productMap[pg.product] || 0) + 1;
+    }
+
+    const couriers = Object.entries(courierMap).map(([name, count]) => ({ name, count }));
+    const products = Object.entries(productMap).map(([name, count]) => ({ name, count }));
+
+    // 4. Create ZIP archive with three folder structures
+    const zipFileName = `shipsplit_${splitId}.zip`;
+    const zipFilePath = path.join(splitsDir, zipFileName);
+
+    await new Promise((resolve, reject) => {
+      const output  = fs.createWriteStream(zipFilePath);
+      const archive = archiver('zip', { zlib: { level: 6 } });
+
+      output.on('close', resolve);
+      archive.on('error', reject);
+      archive.pipe(output);
+
+      // Track per-courier and per-product label index counters
+      const courierCounters = {};
+      const productCounters = {};
+
+      for (const pg of pages) {
+        const cName = sanitizeName(pg.courier);
+        const pName = sanitizeName(pg.product);
+
+        courierCounters[cName] = (courierCounters[cName] || 0) + 1;
+        productCounters[pName] = (productCounters[pName] || 0) + 1;
+
+        const cIdx = String(courierCounters[cName]).padStart(3, '0');
+        const pIdx = String(productCounters[pName]).padStart(3, '0');
+
+        const buf = Buffer.from(pg.pageBytes);
+
+        // by_courier/<Courier>/label_001.pdf
+        archive.append(buf, { name: `by_courier/${cName}/label_${cIdx}.pdf` });
+
+        // by_product/<Product>/label_001.pdf
+        archive.append(buf, { name: `by_product/${pName}/label_${pIdx}.pdf` });
+
+        // all_labels/label_001.pdf
+        archive.append(buf, { name: `all_labels/${pg.fileName}` });
+      }
+
+      archive.finalize();
+    });
+
+    // 5. Clean up temp files
+    for (const f of tempFiles) {
+      fsp.unlink(f).catch(() => {});
+    }
+
+    // 6. Return summary
+    const downloadUrl = `/api/labels/split-download/${splitId}`;
+    return success(res, {
+      splitId,
+      totalPages: pageCount,
+      platform,
+      couriers,
+      products,
+      downloadUrl,
+    }, `Split complete — ${pageCount} label(s) processed`);
+
+  } catch (err) {
+    // Clean up on error
+    for (const f of tempFiles) {
+      fsp.unlink(f).catch(() => {});
+    }
+    next(err);
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   GET /labels/split-download/:splitId
+   Stream the ZIP file for a previous split operation.
+   Optional query param: type = courier | product | all (default: all)
+══════════════════════════════════════════════════════════════════ */
+exports.downloadSplitZIP = async (req, res, next) => {
+  try {
+    const { splitId } = req.params;
+    const type        = req.query.type || 'all'; // courier | product | all
+
+    // Validate splitId is a UUID (basic safety check)
+    if (!/^[0-9a-f-]{36}$/i.test(splitId)) {
+      return next(AppError.badRequest('Invalid splitId'));
+    }
+
+    const splitsDir  = path.join(process.cwd(), 'uploads', 'splits');
+    const zipPath    = path.join(splitsDir, `shipsplit_${splitId}.zip`);
+
+    try { await fsp.access(zipPath); } catch {
+      return next(AppError.notFound('Split ZIP not found. It may have expired.'));
+    }
+
+    // If type is 'all', stream the full ZIP directly
+    if (type === 'all') {
+      const stat = await fsp.stat(zipPath);
+      res.set({
+        'Content-Type':        'application/zip',
+        'Content-Disposition': `attachment; filename="shipsplit_${type}_labels.zip"`,
+        'Content-Length':      stat.size,
+      });
+      fs.createReadStream(zipPath).pipe(res);
+      return;
+    }
+
+    // For courier or product type, create a filtered ZIP on the fly
+    const folderPrefix = type === 'courier' ? 'by_courier/' : 'by_product/';
+
+    // We re-read the full ZIP and re-stream only matching entries
+    // Use archiver to build a new ZIP from the original ZIP's entries
+    res.set({
+      'Content-Type':        'application/zip',
+      'Content-Disposition': `attachment; filename="shipsplit_${type}_labels.zip"`,
+    });
+
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.on('error', (err) => { logger.error('[split-download] archiver error', err); });
+    archive.pipe(res);
+
+    // Read the source ZIP and filter entries by folder prefix
+    const AdmZip = (() => {
+      try { return require('adm-zip'); } catch { return null; }
+    })();
+
+    if (AdmZip) {
+      const zip     = new AdmZip(zipPath);
+      const entries = zip.getEntries();
+      for (const entry of entries) {
+        if (entry.entryName.startsWith(folderPrefix) && !entry.isDirectory) {
+          archive.append(entry.getData(), { name: entry.entryName });
+        }
+      }
+    } else {
+      // Fallback: stream the full ZIP if adm-zip not available
+      const stat = await fsp.stat(zipPath);
+      res.set('Content-Length', stat.size);
+      fs.createReadStream(zipPath).pipe(res);
+      return;
+    }
+
+    await archive.finalize();
   } catch (err) { next(err); }
 };
 
