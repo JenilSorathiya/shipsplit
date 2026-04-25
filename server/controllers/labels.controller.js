@@ -512,7 +512,7 @@ exports.splitUploadedPDF = async (req, res, next) => {
     for (let i = 0; i < pageCount; i++) {
       // Extract a single-page PDF buffer so we can do text extraction on the raw bytes
       const singlePdf  = await PDFDocument.create();
-      const [copiedPage] = await singlePdf.copyPagesFrom(srcPdf, [i]);
+      const [copiedPage] = await singlePdf.copyPages(srcPdf, [i]);
       singlePdf.addPage(copiedPage);
       const pageBytes = await singlePdf.save();
 
