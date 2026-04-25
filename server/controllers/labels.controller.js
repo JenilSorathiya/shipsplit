@@ -426,17 +426,11 @@ function detectCourier(text) {
 
 /* ── Detect SKU/product from page text ──────────────────────────── */
 function detectProduct(text, platform) {
-  // ── Meesho: after "Order No." header, SKU is the first token(s) before size ──
+  // ── Meesho: columns run together, e.g. "3500 2 pscFree Size1Multicolor..." ──
   if (platform === 'meesho' || /check the payable amount on the app/i.test(text)) {
-    // Pattern: "Order No.\n<SKU>  Free Size" or "Order No.\n<SKU>  XL" etc.
-    const m = text.match(
-      /Order\s+No\.[\s\S]{0,10}?\n\s*(.+?)\s{2,}(?:Free\s+Size|XS\b|S\b|M\b|L\b|XL\b|XXL\b|\d+\s*(?:ML|KG|L\b))/i
-    );
+    // After "Order No." header line, the SKU immediately precedes a size token
+    const m = text.match(/Order\s+No\.?[^\n]*\n(.+?)(?:Free\s+Size|XS|XL|XXL|\bS\b|\bM\b|\bL\b)/i);
     if (m) return m[1].trim().slice(0, 60);
-
-    // Fallback: look for SKU line in product details
-    const skuLine = text.match(/Product\s+Details[\s\S]{0,200}?SKU[\s\S]{0,100}?\n\s*([A-Za-z0-9_\-][^\n]{1,50}?)\s+(?:Free|XS|S\b|M\b|L\b|XL\b)/i);
-    if (skuLine) return skuLine[1].trim().slice(0, 60);
   }
 
   // ── Amazon: SKU or ASIN ──
