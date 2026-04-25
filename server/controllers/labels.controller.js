@@ -378,71 +378,40 @@ exports.mergeLabels = async (req, res, next) => {
 /* ══════════════════════════════════════════════════════════════════
    Courier & platform detection constants
 ══════════════════════════════════════════════════════════════════ */
+const pdfParse = require('pdf-parse');
+
 const COURIER_PATTERNS = {
-  'Delhivery':  [/delhivery/i, /dlv/i],
-  'Ekart':      [/ekart/i, /ekt/i, /flipkart\s*log/i],
-  'Bluedart':   [/blue\s*dart/i, /bluedart/i, /bdt/i],
-  'DTDC':       [/dtdc/i],
-  'XpressBees': [/xpress\s*bees/i, /xpressbees/i, /xb/i],
-  'Shadowfax':  [/shadowfax/i, /sfx/i],
+  'Delhivery':  [/delhivery/i],
+  'Ekart':      [/ekart/i, /flipkart\s*log/i],
+  'Bluedart':   [/blue\s*dart/i, /bluedart/i],
+  'DTDC':       [/\bdtdc\b/i],
+  'XpressBees': [/xpress\s*bees/i, /xpressbees/i],
+  'Shadowfax':  [/shadowfax/i],
   'Shiprocket': [/shiprocket/i],
-  'Valmo':      [/valmo/i],
+  'Valmo':      [/\bvalmo\b/i],
   'Amazon':     [/amazon\s*log/i, /amzl/i, /amazon\s*shipping/i],
-  'Ecom':       [/ecom\s*express/i, /ecom\s*exp/i],
+  'Ecom':       [/ecom\s*express/i],
   'Smartr':     [/smartr/i],
 };
 
-const PLATFORM_PATTERNS = {
-  amazon:   { sku: /SKU[:\s]+([A-Z0-9\-_]+)/i,  product: /^\s*(.{10,60})\s*$/m, orderId: /\d{3}-\d{7}-\d{7}/ },
-  flipkart: { sku: /FSN[:\s]+([A-Z0-9]+)/i,      product: /Item[:\s]+(.+)/i,     orderId: /OD\d{12}/ },
-  meesho:   { sku: /SKU[:\s]+([^\n]+)/i,          product: /Product[:\s]+(.+)/i,  orderId: /\d{10,12}/ },
-  myntra:   { sku: /Style\s*ID[:\s]+(\d+)/i,      product: /Style[:\s]+(.+)/i,    orderId: /\d{8,10}/ },
-};
-
-/* ── PDF text extraction helper ──────────────────────────────────── */
-function extractTextFromPDFBuffer(pdfBuffer) {
-  // Extract raw text from PDF binary using BT/ET stream markers
-  const raw = pdfBuffer.toString('latin1');
-  const texts = [];
-
-  // Extract text between BT and ET markers
-  const btEtRegex = /BT([\s\S]*?)ET/g;
-  let match;
-  while ((match = btEtRegex.exec(raw)) !== null) {
-    const block = match[1];
-
-    // Handle (text)Tj  and  (text)'  and  (text)"
-    const tjRegex = /\(([^)\\]*(?:\\.[^)\\]*)*)\)\s*(?:Tj|'|")/g;
-    let tjMatch;
-    while ((tjMatch = tjRegex.exec(block)) !== null) {
-      const decoded = tjMatch[1]
-        .replace(/\\n/g, '\n')
-        .replace(/\\r/g, '\r')
-        .replace(/\\t/g, '\t')
-        .replace(/\\\\/g, '\\')
-        .replace(/\\\(/g, '(')
-        .replace(/\\\)/g, ')');
-      if (decoded.trim()) texts.push(decoded.trim());
-    }
-
-    // Handle [(text)]TJ  array form
-    const tjArrRegex = /\[([^\]]+)\]\s*TJ/g;
-    let arrMatch;
-    while ((arrMatch = tjArrRegex.exec(block)) !== null) {
-      const inner = arrMatch[1];
-      const strRegex = /\(([^)\\]*(?:\\.[^)\\]*)*)\)/g;
-      let sMatch;
-      while ((sMatch = strRegex.exec(inner)) !== null) {
-        const decoded = sMatch[1]
-          .replace(/\\n/g, '\n').replace(/\\r/g, '\r')
-          .replace(/\\t/g, '\t').replace(/\\\\/g, '\\')
-          .replace(/\\\(/g, '(').replace(/\\\)/g, ')');
-        if (decoded.trim()) texts.push(decoded.trim());
-      }
-    }
+/* ── Proper PDF text extraction using pdf-parse ──────────────────── */
+async function extractPageText(pageBuffer) {
+  try {
+    const data = await pdfParse(pageBuffer);
+    return data.text || '';
+  } catch {
+    return '';
   }
+}
 
-  return texts.join(' ');
+/* ── Auto-detect platform from label text ────────────────────────── */
+function autoDetectPlatform(text) {
+  // Meesho: has long numeric order IDs (18+ digits) and "Check the payable amount on the app"
+  if (/check the payable amount on the app/i.test(text)) return 'meesho';
+  if (/\d{3}-\d{7}-\d{7}/.test(text))                   return 'amazon';
+  if (/\bOD\d{12}\b/.test(text))                         return 'flipkart';
+  if (/\bStyle\s*ID\b/i.test(text))                      return 'myntra';
+  return 'meesho'; // default for Meesho-style bulk labels
 }
 
 /* ── Detect courier from page text ──────────────────────────────── */
@@ -455,21 +424,48 @@ function detectCourier(text) {
   return 'Unknown';
 }
 
-/* ── Detect product/SKU from page text ──────────────────────────── */
+/* ── Detect SKU/product from page text ──────────────────────────── */
 function detectProduct(text, platform) {
-  const patterns = PLATFORM_PATTERNS[platform] || PLATFORM_PATTERNS.amazon;
+  // ── Meesho: after "Order No." header, SKU is the first token(s) before size ──
+  if (platform === 'meesho' || /check the payable amount on the app/i.test(text)) {
+    // Pattern: "Order No.\n<SKU>  Free Size" or "Order No.\n<SKU>  XL" etc.
+    const m = text.match(
+      /Order\s+No\.[\s\S]{0,10}?\n\s*(.+?)\s{2,}(?:Free\s+Size|XS\b|S\b|M\b|L\b|XL\b|XXL\b|\d+\s*(?:ML|KG|L\b))/i
+    );
+    if (m) return m[1].trim().slice(0, 60);
 
-  // Try SKU first
-  const skuMatch = patterns.sku.exec(text);
-  if (skuMatch) return skuMatch[1].trim().slice(0, 60);
+    // Fallback: look for SKU line in product details
+    const skuLine = text.match(/Product\s+Details[\s\S]{0,200}?SKU[\s\S]{0,100}?\n\s*([A-Za-z0-9_\-][^\n]{1,50}?)\s+(?:Free|XS|S\b|M\b|L\b|XL\b)/i);
+    if (skuLine) return skuLine[1].trim().slice(0, 60);
+  }
 
-  // Try product name
-  const productMatch = patterns.product.exec(text);
-  if (productMatch) return productMatch[1].trim().slice(0, 60);
+  // ── Amazon: SKU or ASIN ──
+  if (platform === 'amazon') {
+    const asin = text.match(/\b(B0[A-Z0-9]{8})\b/);
+    if (asin) return asin[1];
+    const sku = text.match(/SKU[:\s]+([A-Z0-9\-_]+)/i);
+    if (sku) return sku[1].trim().slice(0, 60);
+    const order = text.match(/\d{3}-\d{7}-\d{7}/);
+    if (order) return `Order-${order[0]}`;
+  }
 
-  // Try orderId as fallback label
-  const orderMatch = patterns.orderId.exec(text);
-  if (orderMatch) return `Order-${orderMatch[0]}`;
+  // ── Flipkart: FSN ──
+  if (platform === 'flipkart') {
+    const fsn = text.match(/FSN[:\s]+([A-Z0-9]+)/i);
+    if (fsn) return fsn[1].trim().slice(0, 60);
+    const order = text.match(/OD\d{12}/);
+    if (order) return `Order-${order[0]}`;
+  }
+
+  // ── Myntra: Style ID ──
+  if (platform === 'myntra') {
+    const style = text.match(/Style\s*ID[:\s]+(\d+)/i);
+    if (style) return style[1];
+  }
+
+  // ── Generic fallback: look for Order No. pattern ──
+  const genericSku = text.match(/Order\s+No\.[\s\S]{0,10}?\n\s*(.+?)\s{2,}/i);
+  if (genericSku) return genericSku[1].trim().slice(0, 60);
 
   return 'Unknown-Product';
 }
@@ -509,18 +505,28 @@ exports.splitUploadedPDF = async (req, res, next) => {
 
     // 2. Process each page: extract text, detect courier & product, split into individual PDFs
     const pages = [];
+    let detectedPlatform = platform; // may be overridden by auto-detection on first page
+
     for (let i = 0; i < pageCount; i++) {
-      // Extract a single-page PDF buffer so we can do text extraction on the raw bytes
+      // Extract a single-page PDF buffer
       const singlePdf  = await PDFDocument.create();
       const [copiedPage] = await singlePdf.copyPages(srcPdf, [i]);
       singlePdf.addPage(copiedPage);
       const pageBytes = await singlePdf.save();
 
-      // Extract text from the page buffer
-      const pageText = extractTextFromPDFBuffer(Buffer.from(pageBytes));
+      // Extract text using pdf-parse (handles compressed streams & font encoding)
+      const pageText = await extractPageText(Buffer.from(pageBytes));
+
+      // Auto-detect platform from first page if not explicitly set
+      if (i === 0) {
+        detectedPlatform = autoDetectPlatform(pageText) || platform;
+        logger.info(`[split-upload] auto-detected platform: ${detectedPlatform}`);
+      }
 
       const courier = detectCourier(pageText);
-      const product = detectProduct(pageText, platform);
+      const product = detectProduct(pageText, detectedPlatform);
+
+      logger.info(`[split-upload] page ${i + 1}: courier=${courier}, product=${product}`);
 
       // Save individual page PDF to temp
       const pageFileName = `label_${String(i + 1).padStart(3, '0')}.pdf`;
@@ -593,7 +599,7 @@ exports.splitUploadedPDF = async (req, res, next) => {
     return success(res, {
       splitId,
       totalPages: pageCount,
-      platform,
+      platform: detectedPlatform,
       couriers,
       products,
       downloadUrl,
