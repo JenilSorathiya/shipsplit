@@ -16,6 +16,13 @@ if (!process.env.JWT_REFRESH_SECRET) {
 }
 const express      = require('express');
 const mongoose     = require('mongoose');
+const fs           = require('fs');
+const path         = require('path');
+
+// ── Ensure upload directories exist ──────────────────────────────────
+['uploads/temp', 'uploads/splits'].forEach(dir => {
+  fs.mkdirSync(path.join(__dirname, dir), { recursive: true });
+});
 const cors         = require('cors');
 const helmet       = require('helmet');
 const compression  = require('compression');
