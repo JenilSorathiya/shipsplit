@@ -629,16 +629,21 @@ exports.downloadSplitZIP = async (req, res, next) => {
       return next(AppError.notFound('Split ZIP not found. It may have expired.'));
     }
 
-    // Filter ZIP by folder prefix (by_courier, by_product, or all_labels)
+    const AdmZip   = require('adm-zip');
+    const zip      = new AdmZip(zipPath);
+    const allEntries = zip.getEntries().filter(e => !e.isDirectory);
+
+    // 'all' → include everything (by_courier + by_product + all_labels folders)
+    // 'courier' → only by_courier/<Name>/<Name>.pdf
+    // 'product' → only by_product/<Name>/<Name>.pdf
     const folderPrefix =
       type === 'courier' ? 'by_courier/' :
-      type === 'product' ? 'by_product/' : 'all_labels/';
+      type === 'product' ? 'by_product/' : null; // null = all
 
-    const AdmZip = require('adm-zip');
-    const zip     = new AdmZip(zipPath);
-    const entries = zip.getEntries().filter(e => e.entryName.startsWith(folderPrefix) && !e.isDirectory);
+    const entries = folderPrefix
+      ? allEntries.filter(e => e.entryName.startsWith(folderPrefix))
+      : allEntries; // all three sections
 
-    // Stream a filtered ZIP back to the client
     res.set({
       'Content-Type':        'application/zip',
       'Content-Disposition': `attachment; filename="shipsplit_${type}_labels.zip"`,
@@ -649,8 +654,11 @@ exports.downloadSplitZIP = async (req, res, next) => {
     archive.pipe(res);
 
     for (const entry of entries) {
-      // Keep the sub-folder structure (e.g. Shadowfax/Shadowfax.pdf)
-      const name = entry.entryName.slice(folderPrefix.length);
+      // For courier/product: strip top prefix so Shadowfax/Shadowfax.pdf is at root
+      // For all: keep full path (by_courier/Shadowfax/Shadowfax.pdf, by_product/..., all_labels/...)
+      const name = folderPrefix
+        ? entry.entryName.slice(folderPrefix.length)
+        : entry.entryName;
       archive.append(entry.getData(), { name });
     }
 
