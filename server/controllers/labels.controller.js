@@ -526,22 +526,29 @@ exports.splitUploadedPDF = async (req, res, next) => {
     }
 
     // 3. Group pages by courier and by product
-    const courierGroups = {}; // { 'Shadowfax': [pageBytes, ...] }
-    const productGroups = {}; // { '3500 2 psc': [pageBytes, ...] }
+    // 3. Build nested groups: courier → product → [pageBytes]
+    // e.g. { 'Shadowfax': { '3500 2 psc': [buf, buf], 'Gym_Hand_Gripper': [buf] } }
+    const nested = {};
     for (const pg of pages) {
-      if (!courierGroups[pg.courier]) courierGroups[pg.courier] = [];
-      courierGroups[pg.courier].push(pg.pageBytes);
-      if (!productGroups[pg.product]) productGroups[pg.product] = [];
-      productGroups[pg.product].push(pg.pageBytes);
+      if (!nested[pg.courier])               nested[pg.courier] = {};
+      if (!nested[pg.courier][pg.product])   nested[pg.courier][pg.product] = [];
+      nested[pg.courier][pg.product].push(pg.pageBytes);
     }
 
-    const couriers = Object.entries(courierGroups).map(([name, arr]) => ({ name, count: arr.length }));
-    const products = Object.entries(productGroups).map(([name, arr]) => ({ name, count: arr.length }));
+    // Summary for API response
+    const courierMap = {};
+    const productMap = {};
+    for (const pg of pages) {
+      courierMap[pg.courier] = (courierMap[pg.courier] || 0) + 1;
+      productMap[pg.product] = (productMap[pg.product] || 0) + 1;
+    }
+    const couriers = Object.entries(courierMap).map(([name, count]) => ({ name, count }));
+    const products = Object.entries(productMap).map(([name, count]) => ({ name, count }));
 
-    // Helper: merge an array of single-page buffers into one multi-page PDF buffer
-    async function mergePageBuffers(pageBufferArr) {
+    // Helper: merge single-page buffers into one multi-page PDF
+    async function mergePageBuffers(bufs) {
       const merged = await PDFDocument.create();
-      for (const buf of pageBufferArr) {
+      for (const buf of bufs) {
         const src = await PDFDocument.load(buf);
         const [p] = await merged.copyPages(src, [0]);
         merged.addPage(p);
@@ -549,7 +556,7 @@ exports.splitUploadedPDF = async (req, res, next) => {
       return Buffer.from(await merged.save());
     }
 
-    // 4. Build ZIP — one merged PDF per courier, one per product, one for all
+    // 4. Build ZIP
     const zipFileName = `shipsplit_${splitId}.zip`;
     const zipFilePath = path.join(splitsDir, zipFileName);
 
@@ -561,21 +568,36 @@ exports.splitUploadedPDF = async (req, res, next) => {
       archive.pipe(output);
     });
 
-    // by_courier/<Courier>/<Courier>.pdf  — folder per courier, one merged PDF inside
-    for (const [courier, bufs] of Object.entries(courierGroups)) {
-      const merged = await mergePageBuffers(bufs);
-      const name   = sanitizeName(courier);
-      archive.append(merged, { name: `by_courier/${name}/${name}.pdf` });
+    // ── Courier → Product nested structure ──────────────────────────
+    // by_courier/<Courier>/<Product>/<Product>.pdf
+    for (const [courier, productMap] of Object.entries(nested)) {
+      const cName = sanitizeName(courier);
+      for (const [product, bufs] of Object.entries(productMap)) {
+        const pName  = sanitizeName(product);
+        const merged = await mergePageBuffers(bufs);
+        archive.append(merged, { name: `by_courier/${cName}/${pName}/${pName}.pdf` });
+      }
     }
 
-    // by_product/<SKU>/<SKU>.pdf  — folder per product, one merged PDF inside
-    for (const [product, bufs] of Object.entries(productGroups)) {
-      const merged = await mergePageBuffers(bufs);
-      const name   = sanitizeName(product);
-      archive.append(merged, { name: `by_product/${name}/${name}.pdf` });
+    // ── Product → Courier nested structure ──────────────────────────
+    // by_product/<Product>/<Courier>/<Courier>.pdf
+    const nestedByProduct = {};
+    for (const pg of pages) {
+      if (!nestedByProduct[pg.product])              nestedByProduct[pg.product] = {};
+      if (!nestedByProduct[pg.product][pg.courier])  nestedByProduct[pg.product][pg.courier] = [];
+      nestedByProduct[pg.product][pg.courier].push(pg.pageBytes);
+    }
+    for (const [product, courierMap] of Object.entries(nestedByProduct)) {
+      const pName = sanitizeName(product);
+      for (const [courier, bufs] of Object.entries(courierMap)) {
+        const cName  = sanitizeName(courier);
+        const merged = await mergePageBuffers(bufs);
+        archive.append(merged, { name: `by_product/${pName}/${cName}/${cName}.pdf` });
+      }
     }
 
-    // all_labels/all_labels.pdf  — every label in one PDF
+    // ── All labels in one PDF ────────────────────────────────────────
+    // all_labels/all_labels.pdf
     const allMerged = await mergePageBuffers(pages.map(p => p.pageBytes));
     archive.append(allMerged, { name: 'all_labels/all_labels.pdf' });
 
