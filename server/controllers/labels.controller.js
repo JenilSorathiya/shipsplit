@@ -522,66 +522,63 @@ exports.splitUploadedPDF = async (req, res, next) => {
 
       logger.info(`[split-upload] page ${i + 1}: courier=${courier}, product=${product}`);
 
-      // Save individual page PDF to temp
-      const pageFileName = `label_${String(i + 1).padStart(3, '0')}.pdf`;
-      const pageTempPath = path.join(tempDir, `${splitId}_${pageFileName}`);
-      await fsp.writeFile(pageTempPath, pageBytes);
-      tempFiles.push(pageTempPath);
-
-      pages.push({ index: i, fileName: pageFileName, courier, product, pageBytes });
+      pages.push({ index: i, courier, product, pageBytes });
     }
 
-    // 3. Build courier and product summary maps
-    const courierMap = {};
-    const productMap = {};
+    // 3. Group pages by courier and by product
+    const courierGroups = {}; // { 'Shadowfax': [pageBytes, ...] }
+    const productGroups = {}; // { '3500 2 psc': [pageBytes, ...] }
     for (const pg of pages) {
-      courierMap[pg.courier] = (courierMap[pg.courier] || 0) + 1;
-      productMap[pg.product] = (productMap[pg.product] || 0) + 1;
+      if (!courierGroups[pg.courier]) courierGroups[pg.courier] = [];
+      courierGroups[pg.courier].push(pg.pageBytes);
+      if (!productGroups[pg.product]) productGroups[pg.product] = [];
+      productGroups[pg.product].push(pg.pageBytes);
     }
 
-    const couriers = Object.entries(courierMap).map(([name, count]) => ({ name, count }));
-    const products = Object.entries(productMap).map(([name, count]) => ({ name, count }));
+    const couriers = Object.entries(courierGroups).map(([name, arr]) => ({ name, count: arr.length }));
+    const products = Object.entries(productGroups).map(([name, arr]) => ({ name, count: arr.length }));
 
-    // 4. Create ZIP archive with three folder structures
+    // Helper: merge an array of single-page buffers into one multi-page PDF buffer
+    async function mergePageBuffers(pageBufferArr) {
+      const merged = await PDFDocument.create();
+      for (const buf of pageBufferArr) {
+        const src = await PDFDocument.load(buf);
+        const [p] = await merged.copyPages(src, [0]);
+        merged.addPage(p);
+      }
+      return Buffer.from(await merged.save());
+    }
+
+    // 4. Build ZIP — one merged PDF per courier, one per product, one for all
     const zipFileName = `shipsplit_${splitId}.zip`;
     const zipFilePath = path.join(splitsDir, zipFileName);
 
-    await new Promise((resolve, reject) => {
-      const output  = fs.createWriteStream(zipFilePath);
-      const archive = archiver('zip', { zlib: { level: 6 } });
-
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    const zipWritePromise = new Promise((resolve, reject) => {
+      const output = fs.createWriteStream(zipFilePath);
       output.on('close', resolve);
       archive.on('error', reject);
       archive.pipe(output);
-
-      // Track per-courier and per-product label index counters
-      const courierCounters = {};
-      const productCounters = {};
-
-      for (const pg of pages) {
-        const cName = sanitizeName(pg.courier);
-        const pName = sanitizeName(pg.product);
-
-        courierCounters[cName] = (courierCounters[cName] || 0) + 1;
-        productCounters[pName] = (productCounters[pName] || 0) + 1;
-
-        const cIdx = String(courierCounters[cName]).padStart(3, '0');
-        const pIdx = String(productCounters[pName]).padStart(3, '0');
-
-        const buf = Buffer.from(pg.pageBytes);
-
-        // by_courier/<Courier>/label_001.pdf
-        archive.append(buf, { name: `by_courier/${cName}/label_${cIdx}.pdf` });
-
-        // by_product/<Product>/label_001.pdf
-        archive.append(buf, { name: `by_product/${pName}/label_${pIdx}.pdf` });
-
-        // all_labels/label_001.pdf
-        archive.append(buf, { name: `all_labels/${pg.fileName}` });
-      }
-
-      archive.finalize();
     });
+
+    // by_courier/<Courier>.pdf  — all labels for that courier in one PDF
+    for (const [courier, bufs] of Object.entries(courierGroups)) {
+      const merged = await mergePageBuffers(bufs);
+      archive.append(merged, { name: `by_courier/${sanitizeName(courier)}.pdf` });
+    }
+
+    // by_product/<SKU>.pdf  — all labels for that product in one PDF
+    for (const [product, bufs] of Object.entries(productGroups)) {
+      const merged = await mergePageBuffers(bufs);
+      archive.append(merged, { name: `by_product/${sanitizeName(product)}.pdf` });
+    }
+
+    // all_labels/all_labels.pdf  — every label in one PDF
+    const allMerged = await mergePageBuffers(pages.map(p => p.pageBytes));
+    archive.append(allMerged, { name: 'all_labels/all_labels.pdf' });
+
+    archive.finalize();
+    await zipWritePromise;
 
     // 5. Clean up temp files
     for (const f of tempFiles) {
@@ -630,51 +627,29 @@ exports.downloadSplitZIP = async (req, res, next) => {
       return next(AppError.notFound('Split ZIP not found. It may have expired.'));
     }
 
-    // If type is 'all', stream the full ZIP directly
-    if (type === 'all') {
-      const stat = await fsp.stat(zipPath);
-      res.set({
-        'Content-Type':        'application/zip',
-        'Content-Disposition': `attachment; filename="shipsplit_${type}_labels.zip"`,
-        'Content-Length':      stat.size,
-      });
-      fs.createReadStream(zipPath).pipe(res);
-      return;
-    }
+    // Filter ZIP by folder prefix (by_courier, by_product, or all_labels)
+    const folderPrefix =
+      type === 'courier' ? 'by_courier/' :
+      type === 'product' ? 'by_product/' : 'all_labels/';
 
-    // For courier or product type, create a filtered ZIP on the fly
-    const folderPrefix = type === 'courier' ? 'by_courier/' : 'by_product/';
+    const AdmZip = require('adm-zip');
+    const zip     = new AdmZip(zipPath);
+    const entries = zip.getEntries().filter(e => e.entryName.startsWith(folderPrefix) && !e.isDirectory);
 
-    // We re-read the full ZIP and re-stream only matching entries
-    // Use archiver to build a new ZIP from the original ZIP's entries
+    // Stream a filtered ZIP back to the client
     res.set({
       'Content-Type':        'application/zip',
       'Content-Disposition': `attachment; filename="shipsplit_${type}_labels.zip"`,
     });
 
     const archive = archiver('zip', { zlib: { level: 6 } });
-    archive.on('error', (err) => { logger.error('[split-download] archiver error', err); });
+    archive.on('error', (err) => logger.error('[split-download] archiver error', err));
     archive.pipe(res);
 
-    // Read the source ZIP and filter entries by folder prefix
-    const AdmZip = (() => {
-      try { return require('adm-zip'); } catch { return null; }
-    })();
-
-    if (AdmZip) {
-      const zip     = new AdmZip(zipPath);
-      const entries = zip.getEntries();
-      for (const entry of entries) {
-        if (entry.entryName.startsWith(folderPrefix) && !entry.isDirectory) {
-          archive.append(entry.getData(), { name: entry.entryName });
-        }
-      }
-    } else {
-      // Fallback: stream the full ZIP if adm-zip not available
-      const stat = await fsp.stat(zipPath);
-      res.set('Content-Length', stat.size);
-      fs.createReadStream(zipPath).pipe(res);
-      return;
+    for (const entry of entries) {
+      // Strip the top-level folder prefix so files sit at root of the downloaded ZIP
+      const name = entry.entryName.replace(folderPrefix, '');
+      archive.append(entry.getData(), { name });
     }
 
     await archive.finalize();
