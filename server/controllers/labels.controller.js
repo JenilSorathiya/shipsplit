@@ -561,16 +561,18 @@ exports.splitUploadedPDF = async (req, res, next) => {
       archive.pipe(output);
     });
 
-    // by_courier/<Courier>.pdf  — all labels for that courier in one PDF
+    // by_courier/<Courier>/<Courier>.pdf  — folder per courier, one merged PDF inside
     for (const [courier, bufs] of Object.entries(courierGroups)) {
       const merged = await mergePageBuffers(bufs);
-      archive.append(merged, { name: `by_courier/${sanitizeName(courier)}.pdf` });
+      const name   = sanitizeName(courier);
+      archive.append(merged, { name: `by_courier/${name}/${name}.pdf` });
     }
 
-    // by_product/<SKU>.pdf  — all labels for that product in one PDF
+    // by_product/<SKU>/<SKU>.pdf  — folder per product, one merged PDF inside
     for (const [product, bufs] of Object.entries(productGroups)) {
       const merged = await mergePageBuffers(bufs);
-      archive.append(merged, { name: `by_product/${sanitizeName(product)}.pdf` });
+      const name   = sanitizeName(product);
+      archive.append(merged, { name: `by_product/${name}/${name}.pdf` });
     }
 
     // all_labels/all_labels.pdf  — every label in one PDF
@@ -647,8 +649,8 @@ exports.downloadSplitZIP = async (req, res, next) => {
     archive.pipe(res);
 
     for (const entry of entries) {
-      // Strip the top-level folder prefix so files sit at root of the downloaded ZIP
-      const name = entry.entryName.replace(folderPrefix, '');
+      // Keep the sub-folder structure (e.g. Shadowfax/Shadowfax.pdf)
+      const name = entry.entryName.slice(folderPrefix.length);
       archive.append(entry.getData(), { name });
     }
 
