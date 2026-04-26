@@ -596,9 +596,15 @@ exports.splitUploadedPDF = async (req, res, next) => {
       }
     }
 
-    // ── All labels in one PDF ────────────────────────────────────────
-    // all_labels/all_labels.pdf
-    const allMerged = await mergePageBuffers(pages.map(p => p.pageBytes));
+    // ── All labels in one PDF — sorted by courier → product ──────────
+    // So printing all_labels.pdf gives grouped output automatically
+    const sortedBufs = [];
+    for (const [, productMap] of Object.entries(nested)) {
+      for (const [, bufs] of Object.entries(productMap)) {
+        sortedBufs.push(...bufs);
+      }
+    }
+    const allMerged = await mergePageBuffers(sortedBufs);
     archive.append(allMerged, { name: 'all_labels/all_labels.pdf' });
 
     archive.finalize();
