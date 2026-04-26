@@ -569,39 +569,39 @@ exports.splitUploadedPDF = async (req, res, next) => {
     });
 
     // ── Courier → Product nested structure ──────────────────────────
-    // by_courier/<Courier>/<Product>/<Product>.pdf
-    for (const [courier, productMap] of Object.entries(nested)) {
+    // by_courier/<Courier>/<Product>/<Product>.pdf  (sorted A→Z)
+    for (const courier of Object.keys(nested).sort()) {
       const cName = sanitizeName(courier);
-      for (const [product, bufs] of Object.entries(productMap)) {
+      for (const product of Object.keys(nested[courier]).sort()) {
         const pName  = sanitizeName(product);
-        const merged = await mergePageBuffers(bufs);
+        const merged = await mergePageBuffers(nested[courier][product]);
         archive.append(merged, { name: `by_courier/${cName}/${pName}/${pName}.pdf` });
       }
     }
 
     // ── Product → Courier nested structure ──────────────────────────
-    // by_product/<Product>/<Courier>/<Courier>.pdf
+    // by_product/<Product>/<Courier>/<Courier>.pdf  (sorted A→Z)
     const nestedByProduct = {};
     for (const pg of pages) {
       if (!nestedByProduct[pg.product])              nestedByProduct[pg.product] = {};
       if (!nestedByProduct[pg.product][pg.courier])  nestedByProduct[pg.product][pg.courier] = [];
       nestedByProduct[pg.product][pg.courier].push(pg.pageBytes);
     }
-    for (const [product, courierMap] of Object.entries(nestedByProduct)) {
+    for (const product of Object.keys(nestedByProduct).sort()) {
       const pName = sanitizeName(product);
-      for (const [courier, bufs] of Object.entries(courierMap)) {
+      for (const courier of Object.keys(nestedByProduct[product]).sort()) {
         const cName  = sanitizeName(courier);
-        const merged = await mergePageBuffers(bufs);
+        const merged = await mergePageBuffers(nestedByProduct[product][courier]);
         archive.append(merged, { name: `by_product/${pName}/${cName}/${cName}.pdf` });
       }
     }
 
-    // ── All labels in one PDF — sorted by courier → product ──────────
-    // So printing all_labels.pdf gives grouped output automatically
+    // ── All labels in one PDF — courier A→Z, then product A→Z within each courier
+    // Same grouping as by_courier folder: Delhivery/ProductA, Delhivery/ProductB, Shadowfax/...
     const sortedBufs = [];
-    for (const [, productMap] of Object.entries(nested)) {
-      for (const [, bufs] of Object.entries(productMap)) {
-        sortedBufs.push(...bufs);
+    for (const courier of Object.keys(nested).sort()) {
+      for (const product of Object.keys(nested[courier]).sort()) {
+        sortedBufs.push(...nested[courier][product]);
       }
     }
     const allMerged = await mergePageBuffers(sortedBufs);
