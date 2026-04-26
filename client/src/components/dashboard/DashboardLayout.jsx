@@ -164,7 +164,7 @@ function Sidebar({ open, collapsed, onClose }) {
 }
 
 /* ── Top bar ──────────────────────────────────────────── */
-function TopBar({ onMenuClick, sidebarWidth }) {
+function TopBar({ onMenuClick, collapsed }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [platform, setPlatform] = useState('all');
@@ -173,9 +173,7 @@ function TopBar({ onMenuClick, sidebarWidth }) {
   const selectedPlatform = PLATFORM_OPTIONS.find((p) => p.id === platform);
 
   return (
-    <header
-      className="fixed top-0 right-0 z-10 h-14 bg-white border-b border-gray-100 flex items-center gap-3 px-4"
-      style={{ left: sidebarWidth }}
+    <header className={`fixed top-0 right-0 z-10 h-14 bg-white border-b border-gray-100 flex items-center gap-3 px-4 left-0 transition-all duration-300 ${collapsed ? 'lg:left-16' : 'lg:left-60'}`}
     >
       {/* Mobile hamburger */}
       <button onClick={onMenuClick} className="lg:hidden p-1.5 rounded-lg text-gray-500 hover:bg-gray-100">
@@ -305,11 +303,10 @@ export default function DashboardLayout() {
         onClose={() => setSidebarOpen(false)}
       />
 
-      {/* Collapse toggle (desktop) */}
+      {/* Collapse toggle (desktop only) */}
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="hidden lg:flex fixed top-4 z-40 items-center justify-center h-6 w-6 rounded-full bg-white border border-gray-200 shadow-xs text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-all"
-        style={{ left: `calc(${sidebarWidth} - 12px)` }}
+        className={`hidden lg:flex fixed top-4 z-40 items-center justify-center h-6 w-6 rounded-full bg-white border border-gray-200 shadow-xs text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-all duration-300 ${collapsed ? 'lg:left-[52px]' : 'lg:left-[228px]'}`}
       >
         <svg className={`h-3 w-3 transition-transform duration-300 ${collapsed ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -318,15 +315,12 @@ export default function DashboardLayout() {
 
       <TopBar
         onMenuClick={() => setSidebarOpen(true)}
-        sidebarWidth={`max(${sidebarWidth}, 0px)`}
+        collapsed={collapsed}
       />
 
-      {/* Main content */}
-      <main
-        className="transition-all duration-300 pt-14 min-h-screen"
-        style={{ marginLeft: sidebarWidth }}
-      >
-        <div className="p-5 lg:p-7 max-w-[1400px] mx-auto animate-fade-in">
+      {/* Main content — no left margin on mobile (sidebar is overlay), margin on desktop */}
+      <main className={`transition-all duration-300 pt-14 min-h-screen ${collapsed ? 'lg:ml-16' : 'lg:ml-60'}`}>
+        <div className="p-4 sm:p-5 lg:p-7 max-w-[1400px] mx-auto animate-fade-in">
           <Outlet />
         </div>
       </main>

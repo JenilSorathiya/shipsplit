@@ -157,60 +157,64 @@ export default function OrdersPage() {
 
       {/* ── Filters ─────────────────────────────────── */}
       <div className="card p-4">
-        <div className="flex flex-wrap gap-3 items-center">
-          {/* Search */}
-          <div className="relative flex-1 min-w-52">
+        <div className="flex flex-col sm:flex-row flex-wrap gap-3">
+          {/* Search — full width on mobile */}
+          <div className="relative w-full sm:flex-1 sm:min-w-0">
             <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
             <input
-              className="form-input pl-9 py-2"
+              className="form-input pl-9 py-2 w-full"
               placeholder="Search order ID, product, SKU…"
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
 
-          {/* Platform */}
-          <select
-            className="form-select py-2 text-sm w-auto min-w-36"
-            value={platform}
-            onChange={(e) => { setPlatform(e.target.value); setPage(1); }}
-          >
-            {PLATFORM_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          {/* Dropdowns row on mobile */}
+          <div className="flex flex-wrap gap-2 items-center">
+            {/* Platform */}
+            <select
+              className="form-select py-2 text-sm flex-1 min-w-0"
+              value={platform}
+              onChange={(e) => { setPlatform(e.target.value); setPage(1); }}
+            >
+              {PLATFORM_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
 
-          {/* Status */}
-          <select
-            className="form-select py-2 text-sm w-auto min-w-32"
-            value={status}
-            onChange={(e) => { setStatus(e.target.value); setPage(1); }}
-          >
-            {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+            {/* Status */}
+            <select
+              className="form-select py-2 text-sm flex-1 min-w-0"
+              value={status}
+              onChange={(e) => { setStatus(e.target.value); setPage(1); }}
+            >
+              {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
 
-          {/* Courier */}
-          <select
-            className="form-select py-2 text-sm w-auto min-w-32"
-            value={courier}
-            onChange={(e) => { setCourier(e.target.value); setPage(1); }}
-          >
-            {COURIER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+            {/* Courier */}
+            <select
+              className="form-select py-2 text-sm flex-1 min-w-0"
+              value={courier}
+              onChange={(e) => { setCourier(e.target.value); setPage(1); }}
+            >
+              {COURIER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
 
-          {/* Date range */}
-          <button className="btn-secondary btn-sm gap-1.5">
-            <CalendarDaysIcon className="h-3.5 w-3.5" />
-            Date Range
-          </button>
-
-          {hasFilters && (
-            <button onClick={clearFilters} className="btn-ghost btn-sm text-gray-400 hover:text-gray-600 gap-1">
-              <XMarkIcon className="h-3.5 w-3.5" />
-              Clear
+            {/* Date range */}
+            <button className="btn-secondary btn-sm gap-1.5 whitespace-nowrap">
+              <CalendarDaysIcon className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Date Range</span>
+              <span className="sm:hidden">Date</span>
             </button>
-          )}
 
-          <div className="ml-auto text-xs text-gray-400">
-            {filtered.length} order{filtered.length !== 1 ? 's' : ''}
+            {hasFilters && (
+              <button onClick={clearFilters} className="btn-ghost btn-sm text-gray-400 hover:text-gray-600 gap-1">
+                <XMarkIcon className="h-3.5 w-3.5" />
+                Clear
+              </button>
+            )}
+
+            <div className="ml-auto text-xs text-gray-400 whitespace-nowrap">
+              {filtered.length} order{filtered.length !== 1 ? 's' : ''}
+            </div>
           </div>
         </div>
       </div>
@@ -246,22 +250,16 @@ export default function OrdersPage() {
             <thead className="table-head">
               <tr>
                 <th className="table-th-check">
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    onChange={toggleAll}
-                    className="rounded"
-                  />
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} className="rounded" />
                 </th>
                 <th className="table-th">Order ID</th>
-                <th className="table-th">Product Name</th>
-                <th className="table-th">SKU</th>
-                <th className="table-th">Qty</th>
-                <th className="table-th">Platform</th>
-                <th className="table-th">Courier</th>
+                <th className="table-th">Product</th>
+                <th className="table-th hidden md:table-cell">SKU</th>
+                <th className="table-th hidden sm:table-cell">Platform</th>
+                <th className="table-th hidden lg:table-cell">Courier</th>
                 <th className="table-th">Status</th>
-                <th className="table-th">Amount</th>
-                <th className="table-th">Date</th>
+                <th className="table-th hidden sm:table-cell">Amount</th>
+                <th className="table-th hidden md:table-cell">Date</th>
                 <th className="table-th w-10"></th>
               </tr>
             </thead>
@@ -283,27 +281,26 @@ export default function OrdersPage() {
                       <input type="checkbox" checked={isSel} onChange={() => toggle(order.id)} />
                     </td>
                     <td className="table-td">
-                      <span className="font-mono text-xs font-semibold text-gray-800">{order.id}</span>
+                      <span className="font-mono text-xs font-semibold text-gray-800 whitespace-nowrap">{order.id}</span>
                     </td>
-                    <td className="table-td max-w-[180px]">
+                    <td className="table-td max-w-[140px] sm:max-w-[180px]">
                       <p className="text-xs font-medium text-gray-900 truncate">{order.product}</p>
                     </td>
-                    <td className="table-td font-mono text-xs text-gray-500">{order.sku}</td>
-                    <td className="table-td text-center text-xs font-medium text-gray-700">{order.qty}</td>
-                    <td className="table-td">
+                    <td className="table-td hidden md:table-cell font-mono text-xs text-gray-500">{order.sku}</td>
+                    <td className="table-td hidden sm:table-cell">
                       <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold ${plt?.badge}`}>
                         <span className={`h-1.5 w-1.5 rounded-full ${plt?.dot}`} />
                         <span className="capitalize">{order.platform}</span>
                       </span>
                     </td>
-                    <td className="table-td text-xs text-gray-600">{order.courier}</td>
+                    <td className="table-td hidden lg:table-cell text-xs text-gray-600">{order.courier}</td>
                     <td className="table-td">
                       <span className={STATUS_STYLE[order.status] || 'badge-gray'}>
                         <span className="capitalize">{order.status}</span>
                       </span>
                     </td>
-                    <td className="table-td text-xs font-semibold text-gray-800">{order.amount}</td>
-                    <td className="table-td text-xs text-gray-400">{order.date}</td>
+                    <td className="table-td hidden sm:table-cell text-xs font-semibold text-gray-800">{order.amount}</td>
+                    <td className="table-td hidden md:table-cell text-xs text-gray-400 whitespace-nowrap">{order.date}</td>
                     <td className="table-td">
                       <RowMenu onView={() => {}} onDelete={() => {}} />
                     </td>

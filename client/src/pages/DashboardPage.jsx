@@ -190,12 +190,14 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Alert banner ────────────────────────────── */}
-      <div className="flex items-center gap-3 p-3.5 bg-warning-50 border border-warning-200 rounded-xl">
-        <ExclamationTriangleIcon className="h-5 w-5 text-warning-600 flex-shrink-0" />
-        <p className="text-sm text-warning-800 flex-1">
-          <span className="font-semibold">243 orders</span> have pending labels — generate and download before dispatch.
-        </p>
-        <button onClick={() => navigate('/dashboard/label-generator')} className="btn-warning btn-sm flex-shrink-0 text-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-3.5 bg-warning-50 border border-warning-200 rounded-xl">
+        <div className="flex items-center gap-3 flex-1">
+          <ExclamationTriangleIcon className="h-5 w-5 text-warning-600 flex-shrink-0" />
+          <p className="text-sm text-warning-800">
+            <span className="font-semibold">243 orders</span> have pending labels — generate and download before dispatch.
+          </p>
+        </div>
+        <button onClick={() => navigate('/dashboard/label-generator')} className="btn-warning btn-sm flex-shrink-0 text-xs self-start sm:self-auto">
           Generate Now
         </button>
       </div>
@@ -293,31 +295,29 @@ export default function DashboardPage() {
               <tr>
                 <th className="table-th">Order ID</th>
                 <th className="table-th">Product</th>
-                <th className="table-th">SKU</th>
-                <th className="table-th">Platform</th>
-                <th className="table-th">Courier</th>
+                <th className="table-th hidden sm:table-cell">Platform</th>
+                <th className="table-th hidden md:table-cell">Courier</th>
                 <th className="table-th">Status</th>
-                <th className="table-th">Date</th>
+                <th className="table-th hidden sm:table-cell">Date</th>
                 <th className="table-th w-12"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {RECENT_ORDERS.map((order) => (
                 <tr key={order.id} className="table-row">
-                  <td className="table-td font-mono text-xs font-semibold text-gray-800">{order.id}</td>
-                  <td className="table-td max-w-[180px]">
+                  <td className="table-td font-mono text-xs font-semibold text-gray-800 whitespace-nowrap">{order.id}</td>
+                  <td className="table-td max-w-[140px] sm:max-w-[180px]">
                     <p className="truncate text-gray-900 font-medium text-xs">{order.product}</p>
                   </td>
-                  <td className="table-td font-mono text-xs text-gray-500">{order.sku}</td>
-                  <td className="table-td">
-                    <span className={`inline-flex items-center gap-1.5 text-xs font-medium`}>
+                  <td className="table-td hidden sm:table-cell">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium">
                       <span className={`h-2 w-2 rounded-full ${PLATFORM_DOT[order.platform]}`} />
                       <span className="capitalize">{order.platform}</span>
                     </span>
                   </td>
-                  <td className="table-td text-xs text-gray-600">{order.courier}</td>
+                  <td className="table-td hidden md:table-cell text-xs text-gray-600">{order.courier}</td>
                   <td className="table-td"><StatusBadge status={order.status} /></td>
-                  <td className="table-td text-xs text-gray-400">{order.date}</td>
+                  <td className="table-td hidden sm:table-cell text-xs text-gray-400 whitespace-nowrap">{order.date}</td>
                   <td className="table-td">
                     <button className="p-1 rounded text-gray-300 hover:text-gray-500 hover:bg-gray-100 transition-colors">
                       <EllipsisHorizontalIcon className="h-4 w-4" />
