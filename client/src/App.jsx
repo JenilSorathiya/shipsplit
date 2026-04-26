@@ -47,7 +47,7 @@ function ProtectedRoute({ children }) {
 
 function GuestRoute({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return null;
+  if (loading) return <PageLoader />;
   if (user) return <Navigate to="/dashboard" replace />;
   return children;
 }

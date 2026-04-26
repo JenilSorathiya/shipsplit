@@ -34,7 +34,12 @@ api.interceptors.response.use(
     const message = error.response?.data?.message || 'Something went wrong';
 
     if (status === 401) {
-      if (!window.location.pathname.startsWith('/login')) {
+      const requestUrl = error.config?.url || '';
+      const isAuthCheck = requestUrl.includes('/auth/me');
+      const onLoginPage = window.location.pathname.startsWith('/login');
+      // Only hard-redirect for protected actions, not the initial /auth/me check
+      if (!isAuthCheck && !onLoginPage) {
+        localStorage.removeItem('accessToken');
         window.location.href = '/login';
       }
     } else if (status === 403) {

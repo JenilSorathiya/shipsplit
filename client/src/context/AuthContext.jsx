@@ -8,10 +8,17 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const fetchMe = useCallback(async () => {
+    // Skip the API call entirely if no token — avoids unnecessary 401
+    const token = localStorage.getItem('accessToken');
+    if (!token) {
+      setLoading(false);
+      return;
+    }
     try {
       const { data } = await api.get('/auth/me');
       setUser(data.user);
     } catch {
+      localStorage.removeItem('accessToken'); // token is invalid/expired
       setUser(null);
     } finally {
       setLoading(false);
