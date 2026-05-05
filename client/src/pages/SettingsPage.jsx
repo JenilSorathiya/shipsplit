@@ -220,9 +220,13 @@ function ProfileTab({ user }) {
 
 /* ── Platforms tab ───────────────────────────────────── */
 function PlatformsTab() {
-  const [statuses, setStatuses] = useState({});
-  const [loading,  setLoading]  = useState(true);
-  const [syncing,  setSyncing]  = useState({});
+  const [statuses,    setStatuses]    = useState({});
+  const [loading,     setLoading]     = useState(true);
+  const [syncing,     setSyncing]     = useState({});
+  const [manualForm,  setManualForm]  = useState(null); // platformId or null
+  const [tokenInput,  setTokenInput]  = useState('');
+  const [sellerInput, setSellerInput] = useState('');
+  const [saving,      setSaving]      = useState(false);
 
   // Check connection status for each platform
   useEffect(() => {
@@ -265,6 +269,26 @@ function PlatformsTab() {
     }
   };
 
+  const handleManualConnect = async () => {
+    if (!tokenInput.trim()) { toast.error('Please enter your refresh token'); return; }
+    setSaving(true);
+    try {
+      await api.post('/platforms/amazon/manual-connect', {
+        refreshToken: tokenInput.trim(),
+        sellerId:     sellerInput.trim(),
+      });
+      setStatuses((prev) => ({ ...prev, amazon: { isConnected: true } }));
+      setManualForm(null);
+      setTokenInput('');
+      setSellerInput('');
+      toast.success('Amazon connected via sandbox token!');
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to save token');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleDisconnect = async (platformId) => {
     if (!window.confirm(`Disconnect ${platformId}? Your synced orders will remain.`)) return;
     try {
@@ -295,7 +319,8 @@ function PlatformsTab() {
         const isConnected = status.isConnected ?? false;
 
         return (
-          <div key={p.id} className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all
+          <div key={p.id}>
+          <div className={`flex items-center gap-4 p-4 rounded-xl border-2 transition-all
             ${isConnected ? 'border-success-200 bg-success-50/30' : 'border-gray-200 bg-white'}`}>
             <div className={`h-11 w-11 rounded-xl ${p.bg} flex items-center justify-center text-white font-bold text-sm flex-shrink-0 shadow-sm`}>
               {p.name[0]}
@@ -332,6 +357,17 @@ function PlatformsTab() {
                   <span className="hidden sm:inline">Sync</span>
                 </button>
               )}
+              {/* Amazon: show manual token option when not connected */}
+              {!isConnected && p.id === 'amazon' && (
+                <button
+                  onClick={() => { setManualForm(manualForm === p.id ? null : p.id); setTokenInput(''); setSellerInput(''); }}
+                  className="btn-ghost btn-sm text-gray-500 gap-1.5"
+                  title="Enter sandbox refresh token manually"
+                >
+                  <KeyIcon className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Token</span>
+                </button>
+              )}
               <button
                 onClick={() => isConnected ? handleDisconnect(p.id) : handleConnect(p.id)}
                 disabled={loading}
@@ -340,6 +376,42 @@ function PlatformsTab() {
                 {isConnected ? 'Disconnect' : 'Connect'}
               </button>
             </div>
+          </div>
+          </div>
+
+          {/* Manual token entry form (sandbox) */}
+          {manualForm === p.id && !isConnected && (
+            <div className="mt-2 p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3">
+              <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+                <KeyIcon className="h-4 w-4" /> Enter Sandbox Refresh Token
+              </p>
+              <div>
+                <label className="form-label text-xs">Refresh Token <span className="text-red-500">*</span></label>
+                <textarea
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  className="form-input text-xs font-mono resize-none"
+                  rows={3}
+                  placeholder="Atzr|IwEB..."
+                />
+              </div>
+              <div>
+                <label className="form-label text-xs">Seller ID <span className="text-gray-400 font-normal">(optional for sandbox)</span></label>
+                <input
+                  value={sellerInput}
+                  onChange={(e) => setSellerInput(e.target.value)}
+                  className="form-input text-xs"
+                  placeholder="e.g. A2ZUZMCNFQ40RB"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={handleManualConnect} disabled={saving} className="btn-primary btn-sm">
+                  {saving ? 'Saving…' : 'Save & Connect'}
+                </button>
+                <button onClick={() => setManualForm(null)} className="btn-ghost btn-sm">Cancel</button>
+              </div>
+            </div>
+          )}
           </div>
         );
       })}

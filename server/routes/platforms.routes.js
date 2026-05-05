@@ -10,7 +10,8 @@ router.get('/amazon/callback', ctrl.handleAmazonCallback);
 /* ─── All routes below require JWT auth ──────────────────────────────────── */
 router.use(authenticate);
 
-router.get('/amazon/oauth-url',   ctrl.getOAuthUrl);          // Step 1: get consent URL
+router.get('/amazon/oauth-url',       ctrl.getOAuthUrl);
+router.post('/amazon/manual-connect', ctrl.manualConnect); // sandbox / self-auth token          // Step 1: get consent URL
 router.get('/',                   ctrl.getAllPlatforms);        // List all connected platforms
 router.get('/:name',              ctrl.getPlatform);           // Get one platform status
 router.delete('/:name',           ctrl.disconnectPlatform);    // Disconnect

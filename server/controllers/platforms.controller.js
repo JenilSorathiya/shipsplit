@@ -164,6 +164,33 @@ exports.syncPlatform = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+/* ── POST /platforms/amazon/manual-connect ───────────────────────────── */
+exports.manualConnect = async (req, res, next) => {
+  try {
+    const { refreshToken, sellerId } = req.body;
+    if (!refreshToken) return next(AppError.badRequest('Refresh token is required'));
+
+    // Upsert the Platform record
+    const platform = await Platform.findOneAndUpdate(
+      { userId: req.user._id, platformName: 'amazon' },
+      { userId: req.user._id, platformName: 'amazon' },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    platform.refreshToken   = refreshToken;              // stored encrypted
+    platform.sellerId       = sellerId || '';
+    platform.marketplaceId  = 'A21TJRUUN4KGV';          // India marketplace
+    platform.isConnected    = true;
+    platform.tokenExpiresAt = null;                      // refreshed on first API call
+    platform.lastSyncStatus = null;
+    platform.metadata       = { manualConnect: true, connectedAt: new Date() };
+    await platform.save();
+
+    logger.info(`Amazon manually connected — user ${req.user._id}`);
+    success(res, { platform: platform.toSafeObject() }, 'Amazon connected via manual token');
+  } catch (err) { next(err); }
+};
+
 /* ── PUT /platforms/:name/settings ───────────────────────────────────── */
 exports.updatePlatformSettings = async (req, res, next) => {
   try {
