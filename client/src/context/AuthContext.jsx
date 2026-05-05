@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import api from '../utils/api';
+import api, { storeToken, clearStoredToken } from '../utils/api';
 
 const AuthContext = createContext(null);
 
@@ -8,18 +8,20 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   /* ── Check session on mount ──────────────────────────────────────────
-     The access token lives in an httpOnly cookie — we can't read it in JS.
-     Just call /auth/me: if the cookie is valid the server returns the user,
-     if not it returns 401 which we silently handle (user stays null).
+     On page load we call /auth/me.  If a valid Bearer token is in
+     sessionStorage the request interceptor adds it automatically.
+     If the access token is expired we try a silent refresh (which uses
+     the httpOnly refresh-token cookie or returns 401 if not logged in).
   ──────────────────────────────────────────────────────────────────── */
   const fetchMe = useCallback(async () => {
     try {
       const { data } = await api.get('/auth/me');
       setUser(data.user);
     } catch {
-      // Access token may have expired — try a silent refresh before giving up
+      // Access token missing/expired — try a silent refresh first
       try {
-        await api.post('/auth/refresh-token');
+        const { data: refreshData } = await api.post('/auth/refresh-token');
+        if (refreshData?.accessToken) storeToken(refreshData.accessToken);
         const { data } = await api.get('/auth/me');
         setUser(data.user);
       } catch {
@@ -35,19 +37,22 @@ export function AuthProvider({ children }) {
   /* ── Auth actions ──────────────────────────────────────────────────── */
   const login = async (email, password) => {
     const { data } = await api.post('/auth/login', { email, password });
-    // Cookie is set by the server; we just capture the user object
+    // Store the access token so subsequent requests use Bearer header
+    if (data.accessToken) storeToken(data.accessToken);
     setUser(data.user);
     return data;
   };
 
   const register = async (name, email, password, phone) => {
     const { data } = await api.post('/auth/register', { name, email, password, phone });
+    if (data.accessToken) storeToken(data.accessToken);
     setUser(data.user);
     return data;
   };
 
   const logout = async () => {
     try { await api.post('/auth/logout'); } catch { /* ignore */ }
+    clearStoredToken();
     setUser(null);
   };
 

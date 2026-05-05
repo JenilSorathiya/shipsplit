@@ -1,16 +1,49 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
+/* ── Access-token store ──────────────────────────────────────────────────
+   The server sets httpOnly cookies, but cross-domain (Vercel → Render) the
+   browser blocks them with sameSite restrictions.
+   Solution: server ALSO returns the accessToken in the response body.
+   We keep it in memory + sessionStorage (cleared on tab close) and send it
+   as an Authorization: Bearer header on every request.
+   The auth middleware already accepts both cookies AND Bearer tokens.
+────────────────────────────────────────────────────────────────────────── */
+const _KEY = '_ss_at';
+let _token = null;
+
+// Restore from sessionStorage on page load (survives F5 refresh)
+try {
+  const t = sessionStorage.getItem(_KEY);
+  if (t) _token = t;
+} catch { /* ignore – privacy mode may block sessionStorage */ }
+
+export const storeToken = (token) => {
+  _token = token || null;
+  try {
+    if (token) sessionStorage.setItem(_KEY, token);
+    else        sessionStorage.removeItem(_KEY);
+  } catch { /* ignore */ }
+};
+
+export const clearStoredToken = () => storeToken(null);
+
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
-  withCredentials: true,          // send httpOnly cookies on every request
+  withCredentials: true,          // still send cookies (useful if same-domain or fixed later)
   headers: { 'Content-Type': 'application/json' },
+});
+
+/* ── Request interceptor — inject Bearer token ───────────────────────── */
+api.interceptors.request.use((config) => {
+  if (_token) config.headers.Authorization = `Bearer ${_token}`;
+  return config;
 });
 
 /* ── Auto-refresh state ──────────────────────────────────────────────────
    When the access token (15 min) expires we silently call /auth/refresh-token.
    Any requests that 401'd while the refresh was in flight are queued and
-   retried once the new cookie arrives.
+   retried once the new token arrives.
 ────────────────────────────────────────────────────────────────────────── */
 let isRefreshing = false;
 let pendingQueue = []; // [{ resolve, reject }]
@@ -43,11 +76,12 @@ api.interceptors.response.use(
     /* ── 401 handling ─────────────────────────────────────────────── */
     if (status === 401) {
       // Auth endpoints — don't try to refresh, just reject so callers handle it
-      const isAuthEndpoint = /\/(auth\/me|auth\/refresh-token|auth\/login|auth\/register)/.test(requestUrl);
+      const isAuthEndpoint = /\/(auth\/refresh-token|auth\/login|auth\/register)/.test(requestUrl);
       if (isAuthEndpoint) return Promise.reject(error);
 
       // Already retried once → give up, go to login
       if (originalRequest._retry) {
+        clearStoredToken();
         window.location.href = '/login';
         return Promise.reject(error);
       }
@@ -65,10 +99,13 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        await api.post('/auth/refresh-token');   // sets new access-token cookie
+        // Refresh returns { accessToken } — store it for Bearer auth
+        const { data: refreshData } = await api.post('/auth/refresh-token');
+        if (refreshData?.accessToken) storeToken(refreshData.accessToken);
         processQueue(null);
         return api(originalRequest);             // retry original request
       } catch (refreshErr) {
+        clearStoredToken();
         processQueue(refreshErr);
         window.location.href = '/login';
         return Promise.reject(refreshErr);
