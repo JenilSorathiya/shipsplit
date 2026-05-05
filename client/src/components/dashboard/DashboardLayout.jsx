@@ -146,7 +146,7 @@ function Sidebar({ open, collapsed, onClose }) {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-white truncate">{user?.name || 'User'}</p>
-                <p className="text-2xs text-slate-500 capitalize">{user?.subscription?.plan || 'Free'} plan</p>
+                <p className="text-2xs text-slate-500 capitalize">{user?.plan || 'free'} plan</p>
               </div>
               <button
                 onClick={() => { logout(); navigate('/login'); }}
@@ -251,7 +251,7 @@ function TopBar({ onMenuClick, collapsed }) {
             <div className="px-3 py-2.5 border-b border-gray-100">
               <p className="text-sm font-semibold text-gray-900 truncate">{user?.name}</p>
               <p className="text-xs text-gray-500 truncate">{user?.email}</p>
-              <span className="mt-1 badge badge-blue capitalize">{user?.subscription?.plan || 'free'} plan</span>
+              <span className="mt-1 badge badge-blue capitalize">{user?.plan || 'free'} plan</span>
             </div>
             {[
               { icon: UserCircleIcon, label: 'Profile', to: '/dashboard/settings' },

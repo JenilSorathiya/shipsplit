@@ -26,7 +26,9 @@ exports.verifyRefreshToken = (token) =>
 const COOKIE_BASE = {
   httpOnly: true,
   secure:   IS_PROD,
-  sameSite: IS_PROD ? 'strict' : 'lax',
+  // 'none' required for cross-domain cookies (Vercel frontend → Render backend)
+  // 'lax' is fine for local dev (same-site)
+  sameSite: IS_PROD ? 'none' : 'lax',
   path:     '/',
 };
 

@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
-import { EyeIcon, EyeSlashIcon, CheckIcon, SparklesIcon } from '@heroicons/react/24/outline';
+import { EyeIcon, EyeSlashIcon, CheckIcon, SparklesIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
 import { useAuth } from '../hooks/useAuth';
 import toast from 'react-hot-toast';
 
 export default function RegisterPage() {
   const { register: registerUser } = useAuth();
   const navigate = useNavigate();
-  const [showPw, setShowPw] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [showPw,    setShowPw]    = useState(false);
+  const [loading,   setLoading]   = useState(false);
+  const [registered, setRegistered] = useState(false);
+  const [regEmail,   setRegEmail]   = useState('');
 
   const { register, handleSubmit, watch, formState: { errors } } = useForm();
   const pw = watch('password', '');
@@ -21,14 +23,59 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       await registerUser(name, email, password, phone);
-      toast.success('Welcome to ShipSplit!');
-      navigate('/dashboard');
+      setRegEmail(email);
+      setRegistered(true);   // show "check your email" screen
     } catch (err) {
       toast.error(err?.response?.data?.message || 'Registration failed');
     } finally {
       setLoading(false);
     }
   };
+
+  /* ── Check-email screen ──────────────────────────────────────────── */
+  if (registered) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-md text-center">
+          <div className="flex items-center justify-center gap-2 mb-8">
+            <div className="h-9 w-9 rounded-xl bg-primary-600 flex items-center justify-center shadow-sm">
+              <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+              </svg>
+            </div>
+            <span className="text-xl font-bold text-gray-900">ShipSplit</span>
+          </div>
+          <div className="bg-white rounded-2xl shadow-card border border-gray-100 p-8 flex flex-col items-center gap-4">
+            <div className="h-16 w-16 rounded-full bg-primary-50 flex items-center justify-center">
+              <EnvelopeIcon className="h-8 w-8 text-primary-600" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">Check your email</h2>
+            <p className="text-sm text-gray-500">
+              We sent a verification link to{' '}
+              <span className="font-semibold text-gray-800">{regEmail}</span>.
+              Click the link to verify your account.
+            </p>
+            <p className="text-xs text-gray-400">
+              Didn't receive it? Check your spam folder or{' '}
+              <button
+                onClick={() => navigate('/dashboard')}
+                className="text-primary-600 hover:text-primary-700 font-medium underline"
+              >
+                skip for now
+              </button>
+              .
+            </p>
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="btn-primary w-full justify-center mt-2"
+            >
+              Go to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">

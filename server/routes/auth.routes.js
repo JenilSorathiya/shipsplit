@@ -21,6 +21,10 @@ router.put('/change-password', authenticate, validate(v.changePassword), authCon
 router.post('/forgot-password',    passwordResetLimiter, validate(v.forgotPassword), authController.forgotPassword);
 router.post('/reset-password/:token', validate(v.resetPassword), authController.resetPassword);
 
+/* ── Email verification ──────────────────────────────────────────────── */
+router.get('/verify-email/:token',          authController.verifyEmail);
+router.post('/resend-verification', authenticate, authController.resendVerification);
+
 /* ── Google OAuth ────────────────────────────────────────────────────── */
 router.get('/google',
   passport.authenticate('google', { scope: ['profile', 'email'], session: false })

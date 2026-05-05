@@ -25,7 +25,14 @@ exports.register = async (req, res, next) => {
       trialEndDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     });
 
-    // Send welcome email (non-blocking)
+    // Generate email verification token
+    const verifyToken = generateOpaqueToken();
+    user.emailVerifyToken   = hashToken(verifyToken);
+    user.emailVerifyExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    await user.save({ validateBeforeSave: false });
+
+    // Send emails (non-blocking — app works even if SMTP not configured)
+    emailService.sendEmailVerification(email, verifyToken).catch((e) => logger.warn('Verify email failed:', e.message));
     emailService.sendWelcome(email, name).catch((e) => logger.warn('Welcome email failed:', e.message));
 
     const { accessToken, refreshToken } = generateTokens(user._id);
@@ -157,6 +164,43 @@ exports.resetPassword = async (req, res, next) => {
 
     clearTokenCookies(res);
     success(res, null, 'Password reset successful. Please log in.');
+  } catch (err) { next(err); }
+};
+
+/* ── Verify email ────────────────────────────────────────────────────── */
+exports.verifyEmail = async (req, res, next) => {
+  try {
+    const hashed = hashToken(req.params.token);
+    const user   = await User.findOne({
+      emailVerifyToken:   hashed,
+      emailVerifyExpires: { $gt: Date.now() },
+    }).select('+emailVerifyToken +emailVerifyExpires');
+
+    if (!user) return next(AppError.badRequest('Verification link is invalid or has expired'));
+
+    user.isEmailVerified    = true;
+    user.emailVerifyToken   = undefined;
+    user.emailVerifyExpires = undefined;
+    await user.save({ validateBeforeSave: false });
+
+    success(res, null, 'Email verified successfully');
+  } catch (err) { next(err); }
+};
+
+/* ── Resend verification email ───────────────────────────────────────── */
+exports.resendVerification = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user._id).select('+emailVerifyToken +emailVerifyExpires');
+    if (!user) return next(AppError.notFound('User not found'));
+    if (user.isEmailVerified) return next(AppError.badRequest('Email is already verified'));
+
+    const token = generateOpaqueToken();
+    user.emailVerifyToken   = hashToken(token);
+    user.emailVerifyExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await user.save({ validateBeforeSave: false });
+
+    emailService.sendEmailVerification(user.email, token).catch((e) => logger.warn('Verify email failed:', e.message));
+    success(res, null, 'Verification email sent');
   } catch (err) { next(err); }
 };
 

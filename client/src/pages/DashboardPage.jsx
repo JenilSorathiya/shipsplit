@@ -5,6 +5,7 @@ import {
   ArrowUpIcon, ArrowDownIcon, ArrowPathIcon, DocumentArrowDownIcon,
   PlusIcon, EllipsisHorizontalIcon, ArrowTrendingUpIcon,
   CheckCircleIcon, ClockIcon, ExclamationTriangleIcon,
+  InformationCircleIcon, XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../hooks/useAuth';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -105,6 +106,7 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [syncing, setSyncing] = useState(false);
+  const [demoDismissed, setDemoDismissed] = useState(false);
 
   const handleSync = () => {
     setSyncing(true);
@@ -120,6 +122,31 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 animate-slide-up">
+
+      {/* ── Demo mode banner ──────────────────────── */}
+      {!demoDismissed && (
+        <div className="flex items-start gap-3 p-3.5 bg-blue-50 border border-blue-200 rounded-xl">
+          <InformationCircleIcon className="h-5 w-5 text-blue-500 flex-shrink-0 mt-0.5" />
+          <p className="flex-1 text-sm text-blue-800">
+            <span className="font-semibold">Demo data</span> — You're seeing sample orders and stats.{' '}
+            <button
+              onClick={() => navigate('/dashboard/settings')}
+              className="underline font-semibold hover:text-blue-900 transition-colors"
+            >
+              Connect your platforms
+            </button>{' '}
+            to see real data.
+          </p>
+          <button
+            onClick={() => setDemoDismissed(true)}
+            className="text-blue-400 hover:text-blue-600 transition-colors flex-shrink-0"
+            title="Dismiss"
+          >
+            <XMarkIcon className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* ── Header ──────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

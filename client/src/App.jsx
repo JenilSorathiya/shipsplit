@@ -1,6 +1,7 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
+import toast from 'react-hot-toast';
 
 // ── Eagerly loaded (tiny, needed immediately) ─────────────────────────
 import DashboardLayout from './components/dashboard/DashboardLayout';
@@ -20,6 +21,44 @@ const BillingPage        = lazy(() => import('./pages/BillingPage'));
 const PrivacyPage        = lazy(() => import('./pages/PrivacyPage'));
 const ReturnsPage        = lazy(() => import('./pages/ReturnsPage'));
 const PaymentsPage       = lazy(() => import('./pages/PaymentsPage'));
+const VerifyEmailPage    = lazy(() => import('./pages/VerifyEmailPage'));
+
+/* ── Cold-start detector ─────────────────────────────────────────────
+   Render free tier spins down after 15 min of inactivity.
+   If the health check takes more than 4 s, show a toast so the user
+   knows the server is waking up (not broken).
+────────────────────────────────────────────────────────────────────── */
+function useServerWake() {
+  useEffect(() => {
+    const API = import.meta.env.VITE_API_URL || '/api';
+    let toastId = null;
+    let done = false;
+
+    const timer = setTimeout(() => {
+      if (!done) {
+        toastId = toast.loading('Server is waking up… this takes ~15 seconds on first load.', {
+          duration: 20000,
+        });
+      }
+    }, 4000);
+
+    fetch(`${API}/health`, { method: 'GET' })
+      .finally(() => {
+        done = true;
+        clearTimeout(timer);
+        if (toastId) {
+          toast.dismiss(toastId);
+          toast.success('Server ready!', { duration: 2000 });
+        }
+      });
+
+    return () => {
+      done = true;
+      clearTimeout(timer);
+      if (toastId) toast.dismiss(toastId);
+    };
+  }, []);
+}
 
 /* ── Full-page loading spinner ───────────────────────────────────────── */
 function PageLoader() {
@@ -53,6 +92,7 @@ function GuestRoute({ children }) {
 }
 
 export default function App() {
+  useServerWake();
   return (
     <Suspense fallback={<PageLoader />}>
       <Routes>
@@ -61,8 +101,9 @@ export default function App() {
         <Route path="/pricing"       element={<PricingPage />} />
         <Route path="/login"         element={<GuestRoute><LoginPage /></GuestRoute>} />
         <Route path="/register"      element={<GuestRoute><RegisterPage /></GuestRoute>} />
-        <Route path="/auth/callback" element={<OAuthCallbackPage />} />
-        <Route path="/privacy"       element={<PrivacyPage />} />
+        <Route path="/auth/callback"          element={<OAuthCallbackPage />} />
+        <Route path="/verify-email/:token"    element={<VerifyEmailPage />} />
+        <Route path="/privacy"                element={<PrivacyPage />} />
 
         {/* ── Protected dashboard ────────────────── */}
         <Route
