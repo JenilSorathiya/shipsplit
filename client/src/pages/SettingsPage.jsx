@@ -377,9 +377,8 @@ function PlatformsTab() {
               </button>
             </div>
           </div>
-          </div>
 
-          {/* Manual token entry form (sandbox) */}
+          {/* Manual token entry form (sandbox) — inside outer wrapper */}
           {manualForm === p.id && !isConnected && (
             <div className="mt-2 p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3">
               <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
