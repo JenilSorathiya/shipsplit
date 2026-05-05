@@ -612,7 +612,10 @@ function TeamTab() {
 /* ── Main settings page ──────────────────────────────── */
 export default function SettingsPage() {
   const { user } = useAuth();
-  const [tab, setTab] = useState('profile');
+
+  // Read ?tab= from URL so Amazon OAuth redirect lands on the right tab
+  const initialTab = new URLSearchParams(window.location.search).get('tab') || 'profile';
+  const [tab, setTab] = useState(initialTab);
 
   const activeTab = TABS.find((t) => t.id === tab);
 
