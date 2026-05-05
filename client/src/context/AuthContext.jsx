@@ -17,7 +17,14 @@ export function AuthProvider({ children }) {
       const { data } = await api.get('/auth/me');
       setUser(data.user);
     } catch {
-      setUser(null);   // not logged in — that's fine
+      // Access token may have expired — try a silent refresh before giving up
+      try {
+        await api.post('/auth/refresh-token');
+        const { data } = await api.get('/auth/me');
+        setUser(data.user);
+      } catch {
+        setUser(null);   // not logged in — that's fine
+      }
     } finally {
       setLoading(false);
     }
