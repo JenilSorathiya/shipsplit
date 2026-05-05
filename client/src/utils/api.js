@@ -76,7 +76,8 @@ api.interceptors.response.use(
     /* ── 401 handling ─────────────────────────────────────────────── */
     if (status === 401) {
       // Auth endpoints — don't try to refresh, just reject so callers handle it
-      const isAuthEndpoint = /\/(auth\/refresh-token|auth\/login|auth\/register)/.test(requestUrl);
+      // auth/me is handled manually in AuthContext.fetchMe (tries refresh itself)
+      const isAuthEndpoint = /\/(auth\/me|auth\/refresh-token|auth\/login|auth\/register)/.test(requestUrl);
       if (isAuthEndpoint) return Promise.reject(error);
 
       // Already retried once → give up, go to login
