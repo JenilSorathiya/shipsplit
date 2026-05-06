@@ -188,43 +188,83 @@ exports.acceptOrder = async (req, res, next) => {
     // Respond immediately — label generation is async
     created(res, { orderId: order._id, labelId: labelJob._id }, 'Order accepted — label generating');
 
-    // Background: compile PDF then save output files
+    // Background: get label from platform API (Amazon) or compile our own
     setImmediate(async () => {
       try {
-        const orderObj = order.toObject();
+        const orderObj  = order.toObject();
+        const jobId     = labelJob._id.toString();
+        const filename  = `label_${orderObj.orderId || jobId}.pdf`;
+        let   pdfBuffer = null;
+        let   awb       = orderObj.awb || null;
 
-        const pdfBuffer = await pdfSvc.compileLabelsIntoPdf([orderObj], {
-          pageSize:      defaultSettings.pageSize,
-          labelsPerPage: defaultSettings.labelsPerPage,
-          settings:      defaultSettings,
-        });
+        /* ── Amazon: use Merchant Fulfillment API to get real label ── */
+        if (orderObj.platform === 'amazon') {
+          try {
+            const amazonSvc  = require('../services/amazon.service');
+            const platformDoc = await Platform
+              .findOne({ userId: req.user._id, platformName: 'amazon' })
+              .select('+_accessToken +_refreshToken');
 
-        const { files } = await pdfSvc.processLabels({
-          pdfBuffer,
-          orders:     [orderObj],
-          splitType:  'order',
-          settings:   defaultSettings,
-          createZip:  false,
-          jobId:      labelJob._id.toString(),
-          onProgress: () => {},
-        });
+            if (platformDoc && platformDoc.isConnected) {
+              // 1. Get eligible shipping services
+              const services   = await amazonSvc.getEligibleShippingServices(platformDoc, orderObj);
+              const serviceId  = services[0]?.ShippingServiceId;
 
-        const outputFiles = files.map((f) => ({
-          name:      f.name,
-          url:       f.url,
-          pageCount: f.pageCount,
-          orders:    f.orders,
-          key:       f.key,
-        }));
+              if (serviceId) {
+                // 2. Create shipment → Amazon returns AWB + label PDF
+                const shipment = await amazonSvc.createMFNShipment(platformDoc, orderObj, serviceId);
+
+                if (shipment.labelBuffer) {
+                  pdfBuffer = shipment.labelBuffer;
+                  awb       = shipment.awb || awb;
+                  logger.info(`[accept] Amazon MFN label for ${orderObj.orderId}, AWB: ${awb}`);
+
+                  // Update order with AWB + courier
+                  await Order.findByIdAndUpdate(order._id, {
+                    awb,
+                    courierPartner:  'other',
+                    platformStatus:  'Shipped',
+                  });
+                }
+              }
+            }
+          } catch (amazonErr) {
+            logger.warn(`[accept] Amazon MFN failed (${amazonErr.message}) — falling back to compiled label`);
+          }
+        }
+
+        /* ── Fallback: compile label from order data ─────────────── */
+        if (!pdfBuffer) {
+          pdfBuffer = await pdfSvc.compileLabelsIntoPdf([orderObj], {
+            pageSize:      defaultSettings.pageSize,
+            labelsPerPage: defaultSettings.labelsPerPage,
+            settings:      defaultSettings,
+          });
+        }
+
+        /* ── Save PDF to disk ────────────────────────────────────── */
+        const path = require('path');
+        const fsp  = require('fs/promises');
+        const outDir  = path.join(process.cwd(), 'uploads', 'output', jobId);
+        await fsp.mkdir(outDir, { recursive: true });
+        await fsp.writeFile(path.join(outDir, filename), pdfBuffer);
+
+        const outputFile = {
+          name:      filename,
+          url:       `/uploads/output/${jobId}/${encodeURIComponent(filename)}`,
+          pageCount: 1,
+          orders:    [orderObj._id],
+          key:       filename,
+        };
 
         await Label.findByIdAndUpdate(labelJob._id, {
           status:      'ready',
-          pageCount:   files.reduce((s, f) => s + f.pageCount, 0),
-          files:       outputFiles,
+          pageCount:   1,
+          files:       [outputFile],
           generatedAt: new Date(),
         });
 
-        logger.info(`[accept] label ${labelJob._id} ready for order ${order.orderId}`);
+        logger.info(`[accept] label ${labelJob._id} ready for order ${orderObj.orderId}`);
       } catch (err) {
         logger.error(`[accept] label ${labelJob._id} failed:`, err.message);
         await Label.findByIdAndUpdate(labelJob._id, { status: 'failed', error: err.message });

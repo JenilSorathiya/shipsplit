@@ -399,7 +399,7 @@ exports.fetchOrderItems = async (platform, orderId) => {
    ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Download the shipping label for an MFN shipment.
+ * Download the shipping label for an existing MFN shipment.
  * Returns { buffer: Buffer, format: 'PDF'|'PNG', dimensions: Object }
  *
  * Note: FBA (AFN) orders don't have MFN labels — Amazon handles shipping.
@@ -421,6 +421,230 @@ exports.fetchShippingLabel = async (platform, shipmentId) => {
     buffer:     Buffer.from(content, 'base64'),
     format:     label.FileContents?.FileFormat || 'PDF',
     dimensions: label.Dimensions || null,
+  };
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   5b. SANDBOX LABEL GENERATOR
+   Builds a realistic-looking Amazon shipping label PDF using pdf-lib.
+   Used in sandbox mode so the full accept→download flow can be tested.
+   ══════════════════════════════════════════════════════════════════════ */
+
+async function generateSandboxLabelPDF(order, awb) {
+  const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+
+  const doc  = await PDFDocument.create();
+  const page = doc.addPage([302, 453]); // A5 label size (107×160 mm → 302×453 pt)
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const { width: W, height: H } = page.getSize();
+
+  const black  = rgb(0, 0, 0);
+  const white  = rgb(1, 1, 1);
+  const orange = rgb(1, 0.6, 0);   // Amazon orange
+  const grey   = rgb(0.9, 0.9, 0.9);
+
+  // ── Header bar ────────────────────────────────────────────────
+  page.drawRectangle({ x: 0, y: H - 32, width: W, height: 32, color: orange });
+  page.drawText('amazon', { x: 10, y: H - 22, size: 14, font: bold, color: black });
+  page.drawText('easy ship', { x: 10, y: H - 30, size: 7, font, color: black });
+  page.drawText('SHIPPING LABEL', { x: W - 110, y: H - 19, size: 9, font: bold, color: black });
+
+  // ── Order ID ──────────────────────────────────────────────────
+  page.drawRectangle({ x: 0, y: H - 54, width: W, height: 22, color: grey });
+  page.drawText('ORDER ID:', { x: 8, y: H - 48, size: 7, font: bold, color: black });
+  page.drawText(String(order.orderId || '').toUpperCase(), {
+    x: 70, y: H - 48, size: 9, font: bold, color: black,
+  });
+
+  // ── Ship To ───────────────────────────────────────────────────
+  let y = H - 70;
+  page.drawText('SHIP TO:', { x: 8, y, size: 7, font: bold, color: black }); y -= 13;
+  page.drawText(String(order.buyerName || 'Test Customer'), { x: 8, y, size: 9, font: bold, color: black }); y -= 12;
+  const addr = order.address || {};
+  if (addr.line1) { page.drawText(String(addr.line1).slice(0, 42), { x: 8, y, size: 8, font, color: black }); y -= 11; }
+  if (addr.line2) { page.drawText(String(addr.line2).slice(0, 42), { x: 8, y, size: 8, font, color: black }); y -= 11; }
+  const cityLine = [addr.city, addr.state].filter(Boolean).join(', ');
+  if (cityLine) { page.drawText(cityLine, { x: 8, y, size: 8, font, color: black }); y -= 11; }
+  if (addr.pincode) { page.drawText(`PIN: ${addr.pincode}`, { x: 8, y, size: 8, font, color: black }); y -= 11; }
+  if (order.buyerPhone) { page.drawText(`Ph: ${order.buyerPhone}`, { x: 8, y, size: 8, font, color: black }); y -= 11; }
+
+  // ── Divider ───────────────────────────────────────────────────
+  y -= 4;
+  page.drawLine({ start: { x: 8, y }, end: { x: W - 8, y }, thickness: 0.5, color: black }); y -= 12;
+
+  // ── Product ───────────────────────────────────────────────────
+  page.drawText('PRODUCT:', { x: 8, y, size: 7, font: bold, color: black }); y -= 12;
+  const prodName = String(order.productName || order.items?.[0]?.name || 'Sandbox Test Product').slice(0, 42);
+  page.drawText(prodName, { x: 8, y, size: 8, font, color: black }); y -= 11;
+  const sku = order.sku || order.items?.[0]?.sku || 'TEST-SKU-001';
+  page.drawText(`SKU: ${sku}`, { x: 8, y, size: 8, font, color: black }); y -= 11;
+  page.drawText(`Qty: ${order.quantity || 1}`, { x: 8, y, size: 8, font, color: black });
+  page.drawText(`₹ ${order.orderValue || 0}${order.isCOD ? ' (COD)' : ''}`, { x: W - 80, y, size: 8, font: bold, color: black }); y -= 11;
+
+  // ── Divider ───────────────────────────────────────────────────
+  y -= 4;
+  page.drawLine({ start: { x: 8, y }, end: { x: W - 8, y }, thickness: 0.5, color: black }); y -= 14;
+
+  // ── AWB ───────────────────────────────────────────────────────
+  page.drawText('AWB / TRACKING:', { x: 8, y, size: 7, font: bold, color: black }); y -= 13;
+  page.drawText(String(awb), { x: 8, y, size: 11, font: bold, color: black }); y -= 18;
+
+  // ── Simulated barcode strips ──────────────────────────────────
+  const barcodeY = y - 36;
+  let bx = 8;
+  const awbStr = String(awb).replace(/[^A-Z0-9]/gi, '');
+  for (let i = 0; i < 68; i++) {
+    const thick = (awbStr.charCodeAt(i % awbStr.length) || 50) % 3 === 0;
+    const bw    = thick ? 3 : 1.5;
+    if (i % 2 === 0) {
+      page.drawRectangle({ x: bx, y: barcodeY, width: bw, height: 36, color: black });
+    }
+    bx += bw + 1;
+    if (bx > W - 8) break;
+  }
+  page.drawText(String(awb), {
+    x: 8, y: barcodeY - 12, size: 7, font, color: black,
+  });
+
+  // ── Footer ────────────────────────────────────────────────────
+  page.drawRectangle({ x: 0, y: 0, width: W, height: 20, color: grey });
+  page.drawText('Powered by ShipSplit  |  sandbox label', {
+    x: 8, y: 6, size: 7, font, color: rgb(0.4, 0.4, 0.4),
+  });
+
+  return Buffer.from(await doc.save());
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   5c. GET ELIGIBLE SHIPPING SERVICES — POST /mfn/v0/eligibleShippingServices
+   ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Returns an array of eligible shipping service objects for an MFN order.
+ * In sandbox mode returns a static test service.
+ */
+exports.getEligibleShippingServices = async (platform, order) => {
+  await ensureFreshToken(platform);
+
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    return [{
+      ShippingServiceId:           'AMAZON_SHIPPING_SAMEDAY',
+      ShippingServiceName:         'Amazon Easy Ship',
+      ShippingServiceOfferId:      'sandbox-offer-001',
+      Rate:                        { Amount: '0.00', CurrencyCode: 'INR' },
+      LatestShipDate:              new Date(Date.now() + 86_400_000).toISOString(),
+      LatestDeliveryDate:          new Date(Date.now() + 3 * 86_400_000).toISOString(),
+      CarrierName:                 'Amazon',
+      RequiresAdditionalSellerInputs: false,
+    }];
+  }
+
+  const body = {
+    ShipmentRequestDetails: {
+      AmazonOrderId:   order.orderId,
+      SellerOrderId:   order.orderId,
+      ItemList: (order.items?.length ? order.items : [{ sku: order.sku }]).map((item, idx) => ({
+        OrderItemId: item.orderItemId || String(idx + 1),
+        Quantity:    item.quantity || 1,
+      })),
+      ShipFromAddress: {
+        Name:                 platform.settings?.sellerName     || 'Seller',
+        AddressLine1:         platform.settings?.addressLine1   || '123 Seller Lane',
+        City:                 platform.settings?.city           || 'Mumbai',
+        StateOrProvinceCode:  platform.settings?.state          || 'MH',
+        PostalCode:           platform.settings?.pincode        || '400001',
+        CountryCode:          'IN',
+        Phone:                platform.settings?.phone          || '9999999999',
+      },
+      PackageDimensions: { Length: 20, Width: 15, Height: 10, Unit: 'centimeters' },
+      Weight:            { Value: 500, Unit: 'grams' },
+      ShippingServiceOptions: {
+        DeliveryExperience: 'DeliveryConfirmationWithSignature',
+        CarrierWillPickUp:  true,
+      },
+    },
+  };
+
+  try {
+    const { data } = await spRequest({
+      platform, method: 'POST',
+      path: '/mfn/v0/eligibleShippingServices', body,
+    });
+    return data.payload?.ShippingServiceList || [];
+  } catch (err) {
+    logger.warn('getEligibleShippingServices error:', err.message);
+    return [];
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   5d. CREATE MFN SHIPMENT — POST /mfn/v0/shipments
+   Creates a shipment on Amazon and returns the shipping label PDF.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Creates an MFN shipment for the given order using the specified shipping service.
+ * Returns { shipmentId, awb, labelBuffer, labelFormat }.
+ *
+ * In sandbox mode, returns a generated test label PDF without calling Amazon.
+ */
+exports.createMFNShipment = async (platform, order, shippingServiceId) => {
+  await ensureFreshToken(platform);
+
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    const awb         = `AMZL${Date.now()}IN`;
+    const labelBuffer = await generateSandboxLabelPDF(order, awb);
+    logger.info(`[sandbox] created mock shipment for order ${order.orderId}, AWB: ${awb}`);
+    return {
+      shipmentId:  `SANDBOX-${order.orderId}`,
+      awb,
+      labelBuffer,
+      labelFormat: 'PDF',
+    };
+  }
+
+  const body = {
+    ShipmentRequestDetails: {
+      AmazonOrderId:   order.orderId,
+      SellerOrderId:   order.orderId,
+      ItemList: (order.items?.length ? order.items : [{ sku: order.sku }]).map((item, idx) => ({
+        OrderItemId: item.orderItemId || String(idx + 1),
+        Quantity:    item.quantity || 1,
+      })),
+      ShipFromAddress: {
+        Name:                 platform.settings?.sellerName     || 'Seller',
+        AddressLine1:         platform.settings?.addressLine1   || '123 Seller Lane',
+        City:                 platform.settings?.city           || 'Mumbai',
+        StateOrProvinceCode:  platform.settings?.state          || 'MH',
+        PostalCode:           platform.settings?.pincode        || '400001',
+        CountryCode:          'IN',
+        Phone:                platform.settings?.phone          || '9999999999',
+      },
+      PackageDimensions: { Length: 20, Width: 15, Height: 10, Unit: 'centimeters' },
+      Weight:            { Value: 500, Unit: 'grams' },
+      ShippingServiceOptions: {
+        DeliveryExperience: 'DeliveryConfirmationWithSignature',
+        CarrierWillPickUp:  true,
+      },
+    },
+    ShippingServiceId:          shippingServiceId,
+    LabelFormatOptionRequest:   { IncludedDocumentHyperlinkList: [] },
+  };
+
+  const { data } = await spRequest({
+    platform, method: 'POST', path: '/mfn/v0/shipments', body,
+  });
+
+  const payload = data.payload || {};
+  const label   = payload.Label;
+  const content = label?.LabelData || label?.FileContents?.Contents;
+
+  return {
+    shipmentId:  payload.ShipmentId  || null,
+    awb:         payload.TrackingId  || null,
+    labelBuffer: content ? Buffer.from(content, 'base64') : null,
+    labelFormat: label?.FileContents?.FileFormat || 'PDF',
   };
 };
 
