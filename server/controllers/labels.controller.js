@@ -318,8 +318,45 @@ exports.downloadFile = async (req, res, next) => {
       label._id.toString(), filename
     );
 
-    try { await fsp.access(filePath); } catch {
-      return next(AppError.notFound('File not found on disk'));
+    // ── Try to serve from disk first ────────────────────────────────
+    let fileExistsOnDisk = false;
+    try { await fsp.access(filePath); fileExistsOnDisk = true; } catch { /* missing */ }
+
+    if (!fileExistsOnDisk) {
+      // Render (and similar platforms) have ephemeral filesystems — files are wiped
+      // on each deploy. Recompile from stored order data so the download still works.
+      logger.warn(`[downloadFile] ${filePath} not on disk — recompiling from orders`);
+
+      const populated = await Label.findOne({ _id: id, userId: req.user._id })
+        .populate('orderIds')
+        .lean();
+
+      if (!populated?.orderIds?.length) {
+        return next(AppError.notFound('Label file not found on disk and no order data to recompile'));
+      }
+
+      try {
+        const pdfBuffer = await pdfSvc.compileLabelsIntoPdf(populated.orderIds, {
+          pageSize:      populated.settings?.pageSize      || 'A4',
+          labelsPerPage: populated.settings?.labelsPerPage || 1,
+          settings:      populated.settings || {},
+        });
+
+        await Label.updateOne(
+          { _id: id },
+          { $inc: { downloadCount: 1 }, $set: { lastDownloadAt: new Date() } }
+        );
+
+        res.set({
+          'Content-Type':        'application/pdf',
+          'Content-Disposition': `attachment; filename="${filename}"`,
+          'Content-Length':      pdfBuffer.length,
+        });
+        return res.send(pdfBuffer);
+      } catch (compileErr) {
+        logger.error('[downloadFile] recompile failed:', compileErr.message);
+        return next(AppError.notFound('File not found on disk and could not be recompiled'));
+      }
     }
 
     const isZip = filename.endsWith('.zip');
