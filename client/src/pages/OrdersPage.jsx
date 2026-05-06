@@ -1,10 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
-  FunnelIcon, MagnifyingGlassIcon, TagIcon,
+  FunnelIcon, MagnifyingGlassIcon,
   ArrowDownTrayIcon, ArrowPathIcon, ChevronLeftIcon, ChevronRightIcon,
   EllipsisHorizontalIcon, TrashIcon, EyeIcon,
-  CalendarDaysIcon, XMarkIcon,
+  CalendarDaysIcon, XMarkIcon, CheckCircleIcon,
 } from '@heroicons/react/24/outline';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
@@ -58,16 +57,14 @@ const PAGE_SIZE = 15;
 /* ── Helpers ────────────────────────────────────────────── */
 function formatDate(dateStr) {
   if (!dateStr) return '—';
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  return new Date(dateStr).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 }
-
-function formatAmount(value, currency = 'INR') {
+function formatAmount(value) {
   if (!value && value !== 0) return '—';
   return `₹${Number(value).toLocaleString('en-IN')}`;
 }
 
-/* ── Row action menu ────────────────────────────────────── */
+/* ── Row action menu (view / delete) ────────────────────── */
 function RowMenu({ onView, onDelete }) {
   const [open, setOpen] = useState(false);
   return (
@@ -96,14 +93,12 @@ function RowMenu({ onView, onDelete }) {
 }
 
 export default function OrdersPage() {
-  const navigate = useNavigate();
-
   /* ── Data state ─────────────────────────────────────────── */
   const [orders,   setOrders]   = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [syncing,  setSyncing]  = useState(false);
 
-  /* ── Filter state ───────────────────────────────────────── */
+  /* ── Filter / page state ────────────────────────────────── */
   const [search,   setSearch]   = useState('');
   const [platform, setPlatform] = useState('');
   const [status,   setStatus]   = useState('');
@@ -111,18 +106,34 @@ export default function OrdersPage() {
   const [selected, setSelected] = useState(new Set());
   const [page,     setPage]     = useState(1);
 
-  /* ── Fetch orders from backend ──────────────────────────── */
+  /* ── Label action state ─────────────────────────────────── */
+  // { [orderId]: { labelId, status: 'processing'|'ready'|'failed', filename? } }
+  const [labelStates,    setLabelStates]    = useState({});
+  const [acceptingIds,   setAcceptingIds]   = useState(new Set());
+  const [downloadingIds, setDownloadingIds] = useState(new Set());
+
+  /* ── Fetch orders ───────────────────────────────────────── */
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
       const { data } = await api.get('/orders', {
         params: { page: 1, limit: 100, sortBy: 'createdAt', sortOrder: 'desc' },
       });
-      // api interceptor unwraps envelope: data is the orders array
-      setOrders(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setOrders(list);
+
+      // Pre-populate labelStates from orders that already have a labelId
+      setLabelStates((prev) => {
+        const next = { ...prev };
+        for (const o of list) {
+          if (o.labelId && !next[o._id]) {
+            next[o._id] = { labelId: o.labelId, status: 'ready' };
+          }
+        }
+        return next;
+      });
     } catch (err) {
-      const msg = err.response?.data?.message || 'Failed to load orders';
-      toast.error(msg);
+      toast.error(err.response?.data?.message || 'Failed to load orders');
       setOrders([]);
     } finally {
       setLoading(false);
@@ -131,16 +142,103 @@ export default function OrdersPage() {
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
-  /* ── Manual sync ────────────────────────────────────────── */
+  /* ── Poll label jobs that are still 'processing' ────────── */
+  useEffect(() => {
+    const processing = Object.entries(labelStates).filter(([, v]) => v.status === 'processing');
+    if (processing.length === 0) return;
+
+    const timer = setInterval(async () => {
+      const updates = {};
+      await Promise.allSettled(
+        processing.map(async ([orderId, { labelId }]) => {
+          try {
+            const { data } = await api.get(`/labels/${labelId}/status`);
+            const label = data?.label;
+            if (label?.status === 'ready') {
+              updates[orderId] = { labelId, status: 'ready', filename: label.files?.[0]?.name };
+              toast.success('Label is ready — click Download Label!');
+            } else if (label?.status === 'failed') {
+              updates[orderId] = { labelId, status: 'failed' };
+              toast.error('Label generation failed');
+            }
+          } catch { /* ignore transient errors */ }
+        })
+      );
+      if (Object.keys(updates).length > 0) {
+        setLabelStates((prev) => ({ ...prev, ...updates }));
+      }
+    }, 3000);
+
+    return () => clearInterval(timer);
+  }, [labelStates]);
+
+  /* ── Accept order → auto-generate label ────────────────── */
+  const handleAccept = async (orderId) => {
+    setAcceptingIds((prev) => new Set(prev).add(orderId));
+    try {
+      const { data } = await api.post(`/orders/${orderId}/accept`);
+      const labelId = data?.labelId;
+      setLabelStates((prev) => ({ ...prev, [orderId]: { labelId, status: 'processing' } }));
+      setOrders((prev) =>
+        prev.map((o) => o._id === orderId ? { ...o, status: 'label_generated', labelId } : o)
+      );
+      toast.success('Order accepted — generating label…');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to accept order');
+    } finally {
+      setAcceptingIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
+    }
+  };
+
+  /* ── Download label for an order ───────────────────────── */
+  const handleDownloadLabel = async (orderId, labelId, filename) => {
+    setDownloadingIds((prev) => new Set(prev).add(orderId));
+    try {
+      let fname = filename;
+      if (!fname) {
+        const { data } = await api.get(`/labels/${labelId}/status`);
+        const label = data?.label;
+        if (label?.status === 'processing') {
+          toast('Label is still generating…');
+          return;
+        }
+        if (label?.status === 'failed') {
+          toast.error('Label generation failed');
+          return;
+        }
+        fname = label?.files?.[0]?.name;
+        if (!fname) { toast.error('No label file found'); return; }
+        setLabelStates((prev) => ({ ...prev, [orderId]: { ...prev[orderId], filename: fname } }));
+      }
+      const resp = await api.get(
+        `/labels/${labelId}/download/${encodeURIComponent(fname)}`,
+        { responseType: 'blob' }
+      );
+      const url = URL.createObjectURL(resp.data);
+      const a   = document.createElement('a');
+      a.href     = url;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success('Label downloaded!');
+    } catch (err) {
+      toast.error('Download failed');
+    } finally {
+      setDownloadingIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
+    }
+  };
+
+  /* ── Sync ───────────────────────────────────────────────── */
   const handleSync = async () => {
     setSyncing(true);
     try {
       const { data } = await api.post('/platforms/amazon/sync', { daysAgo: 30 });
       toast.success(`Sync complete — ${data?.imported ?? 0} new, ${data?.updated ?? 0} updated`);
-      fetchOrders(); // refresh table
+      fetchOrders();
     } catch (err) {
-      const msg = err.response?.data?.message || 'Sync failed';
-      toast.error(msg);
+      toast.error(err.response?.data?.message || 'Sync failed');
     } finally {
       setSyncing(false);
     }
@@ -152,10 +250,10 @@ export default function OrdersPage() {
     if (search) {
       const q = search.toLowerCase();
       data = data.filter((o) =>
-        (o.orderId      || '').toLowerCase().includes(q) ||
-        (o.productName  || '').toLowerCase().includes(q) ||
-        (o.sku          || '').toLowerCase().includes(q) ||
-        (o.buyerName    || '').toLowerCase().includes(q)
+        (o.orderId     || '').toLowerCase().includes(q) ||
+        (o.productName || '').toLowerCase().includes(q) ||
+        (o.sku         || '').toLowerCase().includes(q) ||
+        (o.buyerName   || '').toLowerCase().includes(q)
       );
     }
     if (platform) data = data.filter((o) => o.platform === platform);
@@ -164,9 +262,8 @@ export default function OrdersPage() {
     return data;
   }, [orders, search, platform, status, courier]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paged      = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
+  const totalPages   = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paged        = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const allSelected  = paged.length > 0 && paged.every((o) => selected.has(o._id));
   const someSelected = selected.size > 0;
 
@@ -181,11 +278,12 @@ export default function OrdersPage() {
   /* ── Render ─────────────────────────────────────────────── */
   return (
     <div className="space-y-5 animate-slide-up">
+
       {/* ── Header ──────────────────────────────────── */}
       <div className="page-header">
         <div>
           <h1 className="page-title">Orders</h1>
-          <p className="page-sub">Manage and process orders across all platforms.</p>
+          <p className="page-sub">Accept orders to auto-generate shipping labels, then download and print.</p>
         </div>
         <div className="flex gap-2">
           <button className="btn-secondary btn-sm">
@@ -203,10 +301,17 @@ export default function OrdersPage() {
         </div>
       </div>
 
+      {/* ── How it works tip ────────────────────────── */}
+      <div className="flex items-start gap-3 px-4 py-3 bg-primary-50 border border-primary-100 rounded-xl">
+        <CheckCircleIcon className="h-4 w-4 text-primary-500 flex-shrink-0 mt-0.5" />
+        <p className="text-xs text-primary-700">
+          <span className="font-semibold">How it works:</span> Click <strong>Accept Order</strong> on any pending order — ShipSplit automatically generates a shipping label. Once ready, click <strong>Download Label</strong> to print and ship.
+        </p>
+      </div>
+
       {/* ── Filters ─────────────────────────────────── */}
       <div className="card p-4">
         <div className="flex flex-col sm:flex-row flex-wrap gap-3">
-          {/* Search */}
           <div className="relative w-full sm:flex-1 sm:min-w-0">
             <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
             <input
@@ -216,49 +321,26 @@ export default function OrdersPage() {
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
-
           <div className="flex flex-wrap gap-2 items-center">
-            {/* Platform */}
-            <select
-              className="form-select py-2 text-sm flex-1 min-w-0"
-              value={platform}
-              onChange={(e) => { setPlatform(e.target.value); setPage(1); }}
-            >
+            <select className="form-select py-2 text-sm flex-1 min-w-0" value={platform} onChange={(e) => { setPlatform(e.target.value); setPage(1); }}>
               {PLATFORM_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
-
-            {/* Status */}
-            <select
-              className="form-select py-2 text-sm flex-1 min-w-0"
-              value={status}
-              onChange={(e) => { setStatus(e.target.value); setPage(1); }}
-            >
+            <select className="form-select py-2 text-sm flex-1 min-w-0" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
               {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
-
-            {/* Courier */}
-            <select
-              className="form-select py-2 text-sm flex-1 min-w-0"
-              value={courier}
-              onChange={(e) => { setCourier(e.target.value); setPage(1); }}
-            >
+            <select className="form-select py-2 text-sm flex-1 min-w-0" value={courier} onChange={(e) => { setCourier(e.target.value); setPage(1); }}>
               {COURIER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
-
-            {/* Date range (placeholder) */}
             <button className="btn-secondary btn-sm gap-1.5 whitespace-nowrap">
               <CalendarDaysIcon className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Date Range</span>
-              <span className="sm:hidden">Date</span>
             </button>
-
             {hasFilters && (
               <button onClick={clearFilters} className="btn-ghost btn-sm text-gray-400 hover:text-gray-600 gap-1">
                 <XMarkIcon className="h-3.5 w-3.5" />
                 Clear
               </button>
             )}
-
             <div className="ml-auto text-xs text-gray-400 whitespace-nowrap">
               {loading ? 'Loading…' : `${filtered.length} order${filtered.length !== 1 ? 's' : ''}`}
             </div>
@@ -271,13 +353,6 @@ export default function OrdersPage() {
         <div className="flex items-center gap-3 px-4 py-3 bg-primary-50 border border-primary-100 rounded-xl animate-fade-in">
           <span className="text-sm font-semibold text-primary-700">{selected.size} order{selected.size !== 1 ? 's' : ''} selected</span>
           <div className="flex gap-2 ml-auto flex-wrap">
-            <button
-              onClick={() => navigate('/dashboard/label-generator', { state: { selectedOrders: [...selected] } })}
-              className="btn-primary btn-sm"
-            >
-              <TagIcon className="h-3.5 w-3.5" />
-              Generate Labels for Selected
-            </button>
             <button className="btn-secondary btn-sm">
               <ArrowDownTrayIcon className="h-3.5 w-3.5" />
               Export Selected
@@ -307,12 +382,11 @@ export default function OrdersPage() {
                 <th className="table-th">Status</th>
                 <th className="table-th hidden sm:table-cell">Amount</th>
                 <th className="table-th hidden md:table-cell">Date</th>
-                <th className="table-th w-10"></th>
+                <th className="table-th min-w-[140px]">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {loading ? (
-                /* ── Loading skeleton ── */
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="table-row animate-pulse">
                     <td className="table-td-check"><div className="h-4 w-4 bg-gray-100 rounded" /></td>
@@ -324,7 +398,7 @@ export default function OrdersPage() {
                     <td className="table-td"><div className="h-5 w-16 bg-gray-100 rounded-md" /></td>
                     <td className="table-td hidden sm:table-cell"><div className="h-3 w-14 bg-gray-100 rounded" /></td>
                     <td className="table-td hidden md:table-cell"><div className="h-3 w-20 bg-gray-100 rounded" /></td>
-                    <td className="table-td" />
+                    <td className="table-td"><div className="h-7 w-28 bg-gray-100 rounded-lg" /></td>
                   </tr>
                 ))
               ) : paged.length === 0 ? (
@@ -345,18 +419,21 @@ export default function OrdersPage() {
                   </td>
                 </tr>
               ) : paged.map((order) => {
-                const isSel = selected.has(order._id);
-                const plt   = PLATFORM_STYLE[order.platform] || {};
-                const displayId = order.orderId || order._id;
-                const displayProduct = order.productName || (order.items?.[0]?.name) || '—';
-                const displaySku     = order.sku || (order.items?.[0]?.sku) || '—';
-                const displayCourier = order.courierPartner || '—';
+                const isSel          = selected.has(order._id);
+                const plt            = PLATFORM_STYLE[order.platform] || {};
+                const displayId      = order.orderId || order._id;
+                const displayProduct = order.productName || order.items?.[0]?.name || '—';
+                const displaySku     = order.sku || order.items?.[0]?.sku || '—';
                 const displayStatus  = order.status || 'pending';
-                const displayAmount  = formatAmount(order.orderValue);
-                const displayDate    = formatDate(order.platformCreatedAt || order.createdAt);
+                const ls             = labelStates[order._id];
+                const isAccepting    = acceptingIds.has(order._id);
+                const isDownloading  = downloadingIds.has(order._id);
+                // Order has a label if: local state has one OR DB has one
+                const hasLabel       = ls?.labelId || order.labelId;
+                const labelReady     = ls?.status === 'ready' || (order.labelId && !ls);
 
                 return (
-                  <tr key={order._id} className={`${isSel ? 'table-row-selected' : 'table-row'}`}>
+                  <tr key={order._id} className={isSel ? 'table-row-selected' : 'table-row'}>
                     <td className="table-td-check">
                       <input type="checkbox" checked={isSel} onChange={() => toggle(order._id)} />
                     </td>
@@ -373,16 +450,75 @@ export default function OrdersPage() {
                         <span className="capitalize">{order.platform}</span>
                       </span>
                     </td>
-                    <td className="table-td hidden lg:table-cell text-xs text-gray-600 capitalize">{displayCourier}</td>
+                    <td className="table-td hidden lg:table-cell text-xs text-gray-600 capitalize">
+                      {order.courierPartner || '—'}
+                    </td>
                     <td className="table-td">
                       <span className={STATUS_STYLE[displayStatus] || 'badge-gray'}>
                         <span className="capitalize">{displayStatus.replace('_', ' ')}</span>
                       </span>
                     </td>
-                    <td className="table-td hidden sm:table-cell text-xs font-semibold text-gray-800">{displayAmount}</td>
-                    <td className="table-td hidden md:table-cell text-xs text-gray-400 whitespace-nowrap">{displayDate}</td>
+                    <td className="table-td hidden sm:table-cell text-xs font-semibold text-gray-800">
+                      {formatAmount(order.orderValue)}
+                    </td>
+                    <td className="table-td hidden md:table-cell text-xs text-gray-400 whitespace-nowrap">
+                      {formatDate(order.platformCreatedAt || order.createdAt)}
+                    </td>
+
+                    {/* ── Action column ── */}
                     <td className="table-td">
-                      <RowMenu onView={() => {}} onDelete={() => {}} />
+                      <div className="flex items-center gap-1.5 justify-end">
+                        {isAccepting ? (
+                          /* Accepting spinner */
+                          <span className="flex items-center gap-1.5 text-xs text-gray-500 px-2">
+                            <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                            Accepting…
+                          </span>
+                        ) : ls?.status === 'processing' ? (
+                          /* Label generating spinner */
+                          <span className="flex items-center gap-1.5 text-xs text-primary-600 px-2">
+                            <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                            Generating…
+                          </span>
+                        ) : ls?.status === 'failed' ? (
+                          /* Failed — retry */
+                          <button
+                            onClick={() => handleAccept(order._id)}
+                            className="text-xs text-red-600 hover:text-red-700 font-medium px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
+                          >
+                            Retry
+                          </button>
+                        ) : labelReady && hasLabel ? (
+                          /* Download Label */
+                          <button
+                            onClick={() => handleDownloadLabel(
+                              order._id,
+                              ls?.labelId || order.labelId,
+                              ls?.filename
+                            )}
+                            disabled={isDownloading}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-success-50 text-success-700 border border-success-200 hover:bg-success-100 text-xs font-semibold transition-colors disabled:opacity-60"
+                          >
+                            {isDownloading
+                              ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                              : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
+                            }
+                            {isDownloading ? 'Downloading…' : 'Download Label'}
+                          </button>
+                        ) : displayStatus === 'pending' ? (
+                          /* Accept Order */
+                          <button
+                            onClick={() => handleAccept(order._id)}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors shadow-sm"
+                          >
+                            <CheckCircleIcon className="h-3.5 w-3.5" />
+                            Accept Order
+                          </button>
+                        ) : (
+                          /* Other statuses — just menu */
+                          <RowMenu onView={() => {}} onDelete={() => {}} />
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -433,19 +569,6 @@ export default function OrdersPage() {
           </div>
         )}
       </div>
-
-      {/* ── Floating generate button (mobile) ───────── */}
-      {someSelected && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 lg:hidden">
-          <button
-            onClick={() => navigate('/dashboard/label-generator')}
-            className="flex items-center gap-2 px-5 py-3 bg-primary-600 text-white rounded-2xl shadow-modal text-sm font-semibold"
-          >
-            <TagIcon className="h-4 w-4" />
-            Generate Labels ({selected.size})
-          </button>
-        </div>
-      )}
     </div>
   );
 }

@@ -1,7 +1,9 @@
 const { v4: uuidv4 }   = require('uuid');
 const fs               = require('fs');
 const Order            = require('../models/Order.model');
+const Label            = require('../models/Label.model');
 const Platform         = require('../models/Platform.model');
+const pdfSvc           = require('../services/pdfService');
 const AppError         = require('../utils/AppError');
 const { success, created, noContent, paginated } = require('../utils/response');
 const { parsePlatformCSV } = require('../services/csv.service');
@@ -145,6 +147,89 @@ exports.bulkAssignCourier = async (req, res, next) => {
       { courierPartner }
     );
     success(res, { updated: result.modifiedCount }, `Courier assigned to ${result.modifiedCount} orders`);
+  } catch (err) { next(err); }
+};
+
+/* ── POST /orders/:id/accept  (accept order + auto-generate label) ─── */
+exports.acceptOrder = async (req, res, next) => {
+  try {
+    const order = await Order.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!order) return next(AppError.notFound('Order not found'));
+    if (order.status !== 'pending') {
+      return next(AppError.badRequest('Only pending orders can be accepted'));
+    }
+
+    const defaultSettings = {
+      pageSize:        'A4',
+      labelsPerPage:   1,
+      showProductName: true,
+      showSKU:         true,
+      showOrderId:     true,
+      showAWB:         true,
+      showBarcode:     true,
+      returnAddress:   '',
+    };
+
+    // Create label job record
+    const labelJob = await Label.create({
+      userId:     req.user._id,
+      orderIds:   [order._id],
+      splitType:  'none',
+      settings:   defaultSettings,
+      status:     'processing',
+      labelCount: 1,
+    });
+
+    // Update order: status → label_generated, link label
+    order.status  = 'label_generated';
+    order.labelId = labelJob._id;
+    await order.save();
+
+    // Respond immediately — label generation is async
+    created(res, { orderId: order._id, labelId: labelJob._id }, 'Order accepted — label generating');
+
+    // Background: compile PDF then save output files
+    setImmediate(async () => {
+      try {
+        const orderObj = order.toObject();
+
+        const pdfBuffer = await pdfSvc.compileLabelsIntoPdf([orderObj], {
+          pageSize:      defaultSettings.pageSize,
+          labelsPerPage: defaultSettings.labelsPerPage,
+          settings:      defaultSettings,
+        });
+
+        const { files } = await pdfSvc.processLabels({
+          pdfBuffer,
+          orders:     [orderObj],
+          splitType:  'none',
+          settings:   defaultSettings,
+          createZip:  false,
+          jobId:      labelJob._id.toString(),
+          onProgress: () => {},
+        });
+
+        const outputFiles = files.map((f) => ({
+          name:      f.name,
+          url:       f.url,
+          pageCount: f.pageCount,
+          orders:    f.orders,
+          key:       f.key,
+        }));
+
+        await Label.findByIdAndUpdate(labelJob._id, {
+          status:      'ready',
+          pageCount:   files.reduce((s, f) => s + f.pageCount, 0),
+          files:       outputFiles,
+          generatedAt: new Date(),
+        });
+
+        logger.info(`[accept] label ${labelJob._id} ready for order ${order.orderId}`);
+      } catch (err) {
+        logger.error(`[accept] label ${labelJob._id} failed:`, err.message);
+        await Label.findByIdAndUpdate(labelJob._id, { status: 'failed', error: err.message });
+      }
+    });
   } catch (err) { next(err); }
 };
 
