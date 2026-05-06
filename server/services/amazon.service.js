@@ -276,15 +276,55 @@ async function ensureFreshToken(platform) {
 exports.fetchOrders = async (platform, { createdAfter, nextToken } = {}) => {
   await ensureFreshToken(platform);
 
-  const isSandbox = process.env.AMAZON_SANDBOX === 'true';
-  // FE sandbox has static test data only for its own marketplaces (JP/AU/SG).
-  // India (A21TJRUUN4KGV) is on the EU endpoint and returns 400 on the FE sandbox.
-  // Override to Japan marketplace so the FE sandbox test cases match.
-  const FE_SANDBOX_MARKETPLACE = 'A1VC38T7YXB528'; // Japan — has test data on FE sandbox
+  // ── Sandbox short-circuit ────────────────────────────────────────────────
+  // The SP-API sandbox Orders endpoint only responds to exact static test-case
+  // parameter combinations — arbitrary dates/marketplaces always 400.
+  // Return mock orders so the full sync pipeline (fetch → save → UI) is testable.
+  if (process.env.AMAZON_SANDBOX === 'true' && !nextToken) {
+    logger.info('Sandbox mode: returning mock orders (SP-API sandbox does not support arbitrary queries)');
+    return {
+      orders: [
+        {
+          AmazonOrderId:          'TEST-403-7648025',
+          PurchaseDate:           new Date(Date.now() - 2 * 86_400_000).toISOString(),
+          LastUpdateDate:         new Date().toISOString(),
+          OrderStatus:            'Unshipped',
+          FulfillmentChannel:     'MFN',
+          MarketplaceId:          platform.marketplaceId || IN_MARKETPLACE,
+          NumberOfItemsShipped:   0,
+          NumberOfItemsUnshipped: 1,
+          PaymentMethod:          'Other',
+          PaymentMethodDetails:   ['COD'],
+          IsReplacementOrder:     false,
+          IsBusinessOrder:        false,
+          IsPrime:                false,
+          IsPremiumOrder:         false,
+          IsGlobalExpressEnabled: false,
+          OrderType:              'StandardOrder',
+          ShipServiceLevel:       'Std IN Dom',
+          OrderTotal:             { CurrencyCode: 'INR', Amount: '499.00' },
+          ShippingAddress: {
+            Name:            'Test Customer',
+            AddressLine1:    '123 Sandbox Street',
+            City:            'Mumbai',
+            StateOrRegion:   'MH',
+            PostalCode:      '400001',
+            CountryCode:     'IN',
+          },
+          BuyerInfo: {
+            BuyerEmail: 'test-buyer@marketplace.amazon.com',
+            BuyerName:  'Test Customer',
+          },
+        },
+      ],
+      nextToken: null,
+    };
+  }
+  // ── End sandbox short-circuit ────────────────────────────────────────────
+
   const params = {
-    MarketplaceIds: isSandbox ? FE_SANDBOX_MARKETPLACE : (platform.marketplaceId || IN_MARKETPLACE),
-    // Sandbox has static test data — OrderStatuses filter causes 400 InvalidInput
-    ...(isSandbox ? {} : { OrderStatuses: 'Unshipped,PartiallyShipped' }),
+    MarketplaceIds: platform.marketplaceId || IN_MARKETPLACE,
+    OrderStatuses:  'Unshipped,PartiallyShipped',
     CreatedAfter:   createdAfter || new Date(Date.now() - 7 * 86_400_000).toISOString(),
   };
   if (nextToken) params.NextToken = nextToken;
@@ -312,6 +352,27 @@ exports.fetchOrders = async (platform, { createdAfter, nextToken } = {}) => {
  */
 exports.fetchOrderItems = async (platform, orderId) => {
   await ensureFreshToken(platform);
+
+  // ── Sandbox short-circuit ────────────────────────────────────────────────
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    logger.info(`Sandbox mode: returning mock order items for ${orderId}`);
+    return [
+      {
+        ASIN:              'B0SANDBOX01',
+        SellerSKU:         'TEST-SKU-001',
+        OrderItemId:       'TEST-ITEM-001',
+        Title:             'Sandbox Test Product',
+        QuantityOrdered:   1,
+        QuantityShipped:   0,
+        IsGift:            'false',
+        ItemPrice:         { CurrencyCode: 'INR', Amount: '499.00' },
+        ItemTax:           { CurrencyCode: 'INR', Amount: '0.00' },
+        ShippingPrice:     { CurrencyCode: 'INR', Amount: '0.00' },
+        ShippingTax:       { CurrencyCode: 'INR', Amount: '0.00' },
+      },
+    ];
+  }
+  // ── End sandbox short-circuit ────────────────────────────────────────────
 
   let allItems  = [];
   let nextToken = null;
