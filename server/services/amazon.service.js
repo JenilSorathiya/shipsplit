@@ -277,8 +277,12 @@ exports.fetchOrders = async (platform, { createdAfter, nextToken } = {}) => {
   await ensureFreshToken(platform);
 
   const isSandbox = process.env.AMAZON_SANDBOX === 'true';
+  // FE sandbox has static test data only for its own marketplaces (JP/AU/SG).
+  // India (A21TJRUUN4KGV) is on the EU endpoint and returns 400 on the FE sandbox.
+  // Override to Japan marketplace so the FE sandbox test cases match.
+  const FE_SANDBOX_MARKETPLACE = 'A1VC38T7YXB528'; // Japan — has test data on FE sandbox
   const params = {
-    MarketplaceIds: platform.marketplaceId || IN_MARKETPLACE,
+    MarketplaceIds: isSandbox ? FE_SANDBOX_MARKETPLACE : (platform.marketplaceId || IN_MARKETPLACE),
     // Sandbox has static test data — OrderStatuses filter causes 400 InvalidInput
     ...(isSandbox ? {} : { OrderStatuses: 'Unshipped,PartiallyShipped' }),
     CreatedAfter:   createdAfter || new Date(Date.now() - 7 * 86_400_000).toISOString(),
