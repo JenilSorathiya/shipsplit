@@ -276,9 +276,11 @@ async function ensureFreshToken(platform) {
 exports.fetchOrders = async (platform, { createdAfter, nextToken } = {}) => {
   await ensureFreshToken(platform);
 
+  const isSandbox = process.env.AMAZON_SANDBOX === 'true';
   const params = {
     MarketplaceIds: platform.marketplaceId || IN_MARKETPLACE,
-    OrderStatuses:  'Unshipped,PartiallyShipped',
+    // Sandbox has static test data — OrderStatuses filter causes 400 InvalidInput
+    ...(isSandbox ? {} : { OrderStatuses: 'Unshipped,PartiallyShipped' }),
     CreatedAfter:   createdAfter || new Date(Date.now() - 7 * 86_400_000).toISOString(),
   };
   if (nextToken) params.NextToken = nextToken;
