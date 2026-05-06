@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FunnelIcon, MagnifyingGlassIcon, TagIcon,
@@ -6,34 +6,8 @@ import {
   EllipsisHorizontalIcon, TrashIcon, EyeIcon,
   CalendarDaysIcon, XMarkIcon,
 } from '@heroicons/react/24/outline';
-
-/* ── Mock data ──────────────────────────────────────────── */
-const ALL_ORDERS = Array.from({ length: 87 }, (_, i) => {
-  const platforms = ['amazon', 'flipkart', 'meesho', 'myntra'];
-  const statuses  = ['pending', 'processing', 'shipped', 'delivered', 'returned'];
-  const couriers  = ['Delhivery', 'Shiprocket', 'BlueDart', 'DTDC', 'Ekart'];
-  const products  = [
-    'Cotton Kurta Set - Navy Blue XL', "Men's Running Shoes Size 42",
-    'Floral Printed Saree - Peach OS', 'Slim Fit Jeans Dark Blue 32',
-    'Stainless Steel Bottle 1L', "Women's Floral Dress - M",
-    'Bamboo Cutting Board Set', 'Ceramic Coffee Mug Set of 4',
-    'Wireless Earbuds Pro Max', 'Yoga Mat Non-Slip 6mm',
-  ];
-  const plt = platforms[i % 4];
-  const sts = statuses[i % 5];
-  const pfxMap = { amazon: 'AMZ-406', flipkart: 'FK-OD', meesho: 'MSO-28', myntra: 'MYN' };
-  return {
-    id:        `${pfxMap[plt]}-${(7800000 + i * 137).toString()}`,
-    product:   products[i % products.length],
-    sku:       `SKU-${(1000 + i).toString()}`,
-    qty:       (i % 3) + 1,
-    platform:  plt,
-    courier:   couriers[i % 5],
-    status:    sts,
-    date:      `${10 - Math.floor(i / 20)} Apr 2026`,
-    amount:    `₹${(299 + i * 47).toLocaleString('en-IN')}`,
-  };
-});
+import api from '../utils/api';
+import toast from 'react-hot-toast';
 
 const PLATFORM_OPTIONS = [
   { value: '', label: 'All Platforms' },
@@ -43,20 +17,23 @@ const PLATFORM_OPTIONS = [
   { value: 'myntra',   label: 'Myntra' },
 ];
 const STATUS_OPTIONS = [
-  { value: '',           label: 'All Statuses' },
-  { value: 'pending',    label: 'Pending' },
-  { value: 'processing', label: 'Processing' },
-  { value: 'shipped',    label: 'Shipped' },
-  { value: 'delivered',  label: 'Delivered' },
-  { value: 'returned',   label: 'Returned' },
+  { value: '',                label: 'All Statuses' },
+  { value: 'pending',         label: 'Pending' },
+  { value: 'processing',      label: 'Processing' },
+  { value: 'label_generated', label: 'Label Generated' },
+  { value: 'shipped',         label: 'Shipped' },
+  { value: 'delivered',       label: 'Delivered' },
+  { value: 'returned',        label: 'Returned' },
+  { value: 'cancelled',       label: 'Cancelled' },
 ];
 const COURIER_OPTIONS = [
   { value: '',           label: 'All Couriers' },
-  { value: 'Delhivery',  label: 'Delhivery' },
-  { value: 'Shiprocket', label: 'Shiprocket' },
-  { value: 'BlueDart',   label: 'BlueDart' },
-  { value: 'DTDC',       label: 'DTDC' },
-  { value: 'Ekart',      label: 'Ekart' },
+  { value: 'delhivery',  label: 'Delhivery' },
+  { value: 'shiprocket', label: 'Shiprocket' },
+  { value: 'bluedart',   label: 'BlueDart' },
+  { value: 'dtdc',       label: 'DTDC' },
+  { value: 'ekart',      label: 'Ekart' },
+  { value: 'xpressbees', label: 'XpressBees' },
 ];
 
 const PLATFORM_STYLE = {
@@ -67,14 +44,28 @@ const PLATFORM_STYLE = {
 };
 
 const STATUS_STYLE = {
-  pending:    'badge-orange',
-  processing: 'badge-blue',
-  shipped:    'badge-green',
-  delivered:  'badge bg-success-100 text-success-800 ring-1 ring-success-200/50',
-  returned:   'badge-red',
+  pending:         'badge-orange',
+  processing:      'badge-blue',
+  label_generated: 'badge-blue',
+  shipped:         'badge-green',
+  delivered:       'badge bg-success-100 text-success-800 ring-1 ring-success-200/50',
+  returned:        'badge-red',
+  cancelled:       'badge-red',
 };
 
 const PAGE_SIZE = 15;
+
+/* ── Helpers ────────────────────────────────────────────── */
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function formatAmount(value, currency = 'INR') {
+  if (!value && value !== 0) return '—';
+  return `₹${Number(value).toLocaleString('en-IN')}`;
+}
 
 /* ── Row action menu ────────────────────────────────────── */
 function RowMenu({ onView, onDelete }) {
@@ -106,35 +97,88 @@ function RowMenu({ onView, onDelete }) {
 
 export default function OrdersPage() {
   const navigate = useNavigate();
+
+  /* ── Data state ─────────────────────────────────────────── */
+  const [orders,   setOrders]   = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [syncing,  setSyncing]  = useState(false);
+
+  /* ── Filter state ───────────────────────────────────────── */
   const [search,   setSearch]   = useState('');
   const [platform, setPlatform] = useState('');
   const [status,   setStatus]   = useState('');
   const [courier,  setCourier]  = useState('');
   const [selected, setSelected] = useState(new Set());
-  const [page, setPage] = useState(1);
+  const [page,     setPage]     = useState(1);
 
-  /* Filter */
+  /* ── Fetch orders from backend ──────────────────────────── */
+  const fetchOrders = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/orders', {
+        params: { page: 1, limit: 500, sortBy: 'createdAt', sortOrder: 'desc' },
+      });
+      // api interceptor unwraps envelope: data is the orders array
+      setOrders(Array.isArray(data) ? data : []);
+    } catch (err) {
+      const msg = err.response?.data?.message || 'Failed to load orders';
+      toast.error(msg);
+      setOrders([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchOrders(); }, [fetchOrders]);
+
+  /* ── Manual sync ────────────────────────────────────────── */
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const { data } = await api.post('/platforms/amazon/sync', { daysAgo: 30 });
+      toast.success(`Sync complete — ${data?.imported ?? 0} new, ${data?.updated ?? 0} updated`);
+      fetchOrders(); // refresh table
+    } catch (err) {
+      const msg = err.response?.data?.message || 'Sync failed';
+      toast.error(msg);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  /* ── Client-side filter + paginate ─────────────────────── */
   const filtered = useMemo(() => {
-    let data = ALL_ORDERS;
-    if (search)   data = data.filter((o) => o.id.toLowerCase().includes(search.toLowerCase()) || o.product.toLowerCase().includes(search.toLowerCase()) || o.sku.toLowerCase().includes(search.toLowerCase()));
+    let data = orders;
+    if (search) {
+      const q = search.toLowerCase();
+      data = data.filter((o) =>
+        (o.orderId      || '').toLowerCase().includes(q) ||
+        (o.productName  || '').toLowerCase().includes(q) ||
+        (o.sku          || '').toLowerCase().includes(q) ||
+        (o.buyerName    || '').toLowerCase().includes(q)
+      );
+    }
     if (platform) data = data.filter((o) => o.platform === platform);
-    if (status)   data = data.filter((o) => o.status === status);
-    if (courier)  data = data.filter((o) => o.courier === courier);
+    if (status)   data = data.filter((o) => o.status   === status);
+    if (courier)  data = data.filter((o) => o.courierPartner === courier);
     return data;
-  }, [search, platform, status, courier]);
+  }, [orders, search, platform, status, courier]);
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paged      = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const allSelected = paged.length > 0 && paged.every((o) => selected.has(o.id));
+  const allSelected  = paged.length > 0 && paged.every((o) => selected.has(o._id));
   const someSelected = selected.size > 0;
 
-  const toggleAll  = () => setSelected(allSelected ? new Set() : new Set(paged.map((o) => o.id)));
-  const toggle     = (id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAll = () =>
+    setSelected(allSelected ? new Set() : new Set(paged.map((o) => o._id)));
+  const toggle = (id) =>
+    setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   const clearFilters = () => { setSearch(''); setPlatform(''); setStatus(''); setCourier(''); setPage(1); };
   const hasFilters   = search || platform || status || courier;
 
+  /* ── Render ─────────────────────────────────────────────── */
   return (
     <div className="space-y-5 animate-slide-up">
       {/* ── Header ──────────────────────────────────── */}
@@ -148,9 +192,13 @@ export default function OrdersPage() {
             <ArrowDownTrayIcon className="h-3.5 w-3.5" />
             Export CSV
           </button>
-          <button className="btn-secondary btn-sm">
-            <ArrowPathIcon className="h-3.5 w-3.5" />
-            Sync
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="btn-secondary btn-sm"
+          >
+            <ArrowPathIcon className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
+            {syncing ? 'Syncing…' : 'Sync'}
           </button>
         </div>
       </div>
@@ -158,18 +206,17 @@ export default function OrdersPage() {
       {/* ── Filters ─────────────────────────────────── */}
       <div className="card p-4">
         <div className="flex flex-col sm:flex-row flex-wrap gap-3">
-          {/* Search — full width on mobile */}
+          {/* Search */}
           <div className="relative w-full sm:flex-1 sm:min-w-0">
             <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
             <input
               className="form-input pl-9 py-2 w-full"
-              placeholder="Search order ID, product, SKU…"
+              placeholder="Search order ID, product, SKU, buyer…"
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             />
           </div>
 
-          {/* Dropdowns row on mobile */}
           <div className="flex flex-wrap gap-2 items-center">
             {/* Platform */}
             <select
@@ -198,7 +245,7 @@ export default function OrdersPage() {
               {COURIER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
 
-            {/* Date range */}
+            {/* Date range (placeholder) */}
             <button className="btn-secondary btn-sm gap-1.5 whitespace-nowrap">
               <CalendarDaysIcon className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Date Range</span>
@@ -213,7 +260,7 @@ export default function OrdersPage() {
             )}
 
             <div className="ml-auto text-xs text-gray-400 whitespace-nowrap">
-              {filtered.length} order{filtered.length !== 1 ? 's' : ''}
+              {loading ? 'Loading…' : `${filtered.length} order${filtered.length !== 1 ? 's' : ''}`}
             </div>
           </div>
         </div>
@@ -264,43 +311,76 @@ export default function OrdersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {paged.length === 0 ? (
+              {loading ? (
+                /* ── Loading skeleton ── */
+                Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={i} className="table-row animate-pulse">
+                    <td className="table-td-check"><div className="h-4 w-4 bg-gray-100 rounded" /></td>
+                    <td className="table-td"><div className="h-3 w-28 bg-gray-100 rounded" /></td>
+                    <td className="table-td"><div className="h-3 w-40 bg-gray-100 rounded" /></td>
+                    <td className="table-td hidden md:table-cell"><div className="h-3 w-20 bg-gray-100 rounded" /></td>
+                    <td className="table-td hidden sm:table-cell"><div className="h-5 w-16 bg-gray-100 rounded-md" /></td>
+                    <td className="table-td hidden lg:table-cell"><div className="h-3 w-20 bg-gray-100 rounded" /></td>
+                    <td className="table-td"><div className="h-5 w-16 bg-gray-100 rounded-md" /></td>
+                    <td className="table-td hidden sm:table-cell"><div className="h-3 w-14 bg-gray-100 rounded" /></td>
+                    <td className="table-td hidden md:table-cell"><div className="h-3 w-20 bg-gray-100 rounded" /></td>
+                    <td className="table-td" />
+                  </tr>
+                ))
+              ) : paged.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-16 text-center">
+                  <td colSpan={10} className="px-4 py-16 text-center">
                     <FunnelIcon className="h-8 w-8 text-gray-200 mx-auto mb-3" />
-                    <p className="text-sm font-medium text-gray-500">No orders match your filters</p>
-                    <button onClick={clearFilters} className="mt-2 text-xs text-primary-600 hover:text-primary-700 font-medium">Clear filters</button>
+                    {hasFilters ? (
+                      <>
+                        <p className="text-sm font-medium text-gray-500">No orders match your filters</p>
+                        <button onClick={clearFilters} className="mt-2 text-xs text-primary-600 hover:text-primary-700 font-medium">Clear filters</button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-medium text-gray-500">No orders yet</p>
+                        <p className="text-xs text-gray-400 mt-1">Click <strong>Sync</strong> to import orders from your connected platforms.</p>
+                      </>
+                    )}
                   </td>
                 </tr>
               ) : paged.map((order) => {
-                const isSel = selected.has(order.id);
-                const plt = PLATFORM_STYLE[order.platform];
+                const isSel = selected.has(order._id);
+                const plt   = PLATFORM_STYLE[order.platform] || {};
+                const displayId = order.orderId || order._id;
+                const displayProduct = order.productName || (order.items?.[0]?.name) || '—';
+                const displaySku     = order.sku || (order.items?.[0]?.sku) || '—';
+                const displayCourier = order.courierPartner || '—';
+                const displayStatus  = order.status || 'pending';
+                const displayAmount  = formatAmount(order.orderValue);
+                const displayDate    = formatDate(order.platformCreatedAt || order.createdAt);
+
                 return (
-                  <tr key={order.id} className={`${isSel ? 'table-row-selected' : 'table-row'}`}>
+                  <tr key={order._id} className={`${isSel ? 'table-row-selected' : 'table-row'}`}>
                     <td className="table-td-check">
-                      <input type="checkbox" checked={isSel} onChange={() => toggle(order.id)} />
+                      <input type="checkbox" checked={isSel} onChange={() => toggle(order._id)} />
                     </td>
                     <td className="table-td">
-                      <span className="font-mono text-xs font-semibold text-gray-800 whitespace-nowrap">{order.id}</span>
+                      <span className="font-mono text-xs font-semibold text-gray-800 whitespace-nowrap">{displayId}</span>
                     </td>
                     <td className="table-td max-w-[140px] sm:max-w-[180px]">
-                      <p className="text-xs font-medium text-gray-900 truncate">{order.product}</p>
+                      <p className="text-xs font-medium text-gray-900 truncate">{displayProduct}</p>
                     </td>
-                    <td className="table-td hidden md:table-cell font-mono text-xs text-gray-500">{order.sku}</td>
+                    <td className="table-td hidden md:table-cell font-mono text-xs text-gray-500">{displaySku}</td>
                     <td className="table-td hidden sm:table-cell">
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold ${plt?.badge}`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${plt?.dot}`} />
+                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold ${plt?.badge || 'bg-gray-100 text-gray-600'}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${plt?.dot || 'bg-gray-400'}`} />
                         <span className="capitalize">{order.platform}</span>
                       </span>
                     </td>
-                    <td className="table-td hidden lg:table-cell text-xs text-gray-600">{order.courier}</td>
+                    <td className="table-td hidden lg:table-cell text-xs text-gray-600 capitalize">{displayCourier}</td>
                     <td className="table-td">
-                      <span className={STATUS_STYLE[order.status] || 'badge-gray'}>
-                        <span className="capitalize">{order.status}</span>
+                      <span className={STATUS_STYLE[displayStatus] || 'badge-gray'}>
+                        <span className="capitalize">{displayStatus.replace('_', ' ')}</span>
                       </span>
                     </td>
-                    <td className="table-td hidden sm:table-cell text-xs font-semibold text-gray-800">{order.amount}</td>
-                    <td className="table-td hidden md:table-cell text-xs text-gray-400 whitespace-nowrap">{order.date}</td>
+                    <td className="table-td hidden sm:table-cell text-xs font-semibold text-gray-800">{displayAmount}</td>
+                    <td className="table-td hidden md:table-cell text-xs text-gray-400 whitespace-nowrap">{displayDate}</td>
                     <td className="table-td">
                       <RowMenu onView={() => {}} onDelete={() => {}} />
                     </td>
@@ -312,40 +392,46 @@ export default function OrdersPage() {
         </div>
 
         {/* ── Pagination ──────────────────────────── */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3.5 border-t border-gray-100 bg-gray-50/50">
-          <p className="text-xs text-gray-500">
-            Showing <span className="font-semibold text-gray-700">{(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)}</span> of <span className="font-semibold text-gray-700">{filtered.length}</span> orders
-          </p>
-          <div className="flex items-center gap-1">
-            <button
-              disabled={page === 1}
-              onClick={() => setPage(p => p - 1)}
-              className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-white hover:text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              <ChevronLeftIcon className="h-4 w-4" />
-            </button>
-            {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-              const p = i + 1;
-              return (
-                <button
-                  key={p}
-                  onClick={() => setPage(p)}
-                  className={`h-8 w-8 rounded-lg text-xs font-semibold transition-colors ${page === p ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100 border border-gray-200'}`}
-                >
-                  {p}
-                </button>
-              );
-            })}
-            {totalPages > 7 && <span className="text-xs text-gray-400 px-1">…</span>}
-            <button
-              disabled={page === totalPages}
-              onClick={() => setPage(p => p + 1)}
-              className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-white hover:text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              <ChevronRightIcon className="h-4 w-4" />
-            </button>
+        {!loading && filtered.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3.5 border-t border-gray-100 bg-gray-50/50">
+            <p className="text-xs text-gray-500">
+              Showing{' '}
+              <span className="font-semibold text-gray-700">
+                {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)}
+              </span>{' '}
+              of <span className="font-semibold text-gray-700">{filtered.length}</span> orders
+            </p>
+            <div className="flex items-center gap-1">
+              <button
+                disabled={page === 1}
+                onClick={() => setPage((p) => p - 1)}
+                className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-white hover:text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronLeftIcon className="h-4 w-4" />
+              </button>
+              {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+                const p = i + 1;
+                return (
+                  <button
+                    key={p}
+                    onClick={() => setPage(p)}
+                    className={`h-8 w-8 rounded-lg text-xs font-semibold transition-colors ${page === p ? 'bg-primary-600 text-white' : 'text-gray-600 hover:bg-gray-100 border border-gray-200'}`}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+              {totalPages > 7 && <span className="text-xs text-gray-400 px-1">…</span>}
+              <button
+                disabled={page === totalPages}
+                onClick={() => setPage((p) => p + 1)}
+                className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-white hover:text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <ChevronRightIcon className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* ── Floating generate button (mobile) ───────── */}
