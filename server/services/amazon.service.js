@@ -23,7 +23,9 @@ const Order    = require('../models/Order.model');
 
 /* ── Constants ──────────────────────────────────────────────────────── */
 const LWA_TOKEN_URL  = 'https://api.amazon.com/auth/o2/token';
-const SP_API_BASE    = 'https://sellingpartnerapi-fe.amazon.com'; // FE region (India/JP/AU)
+const SP_API_BASE    = process.env.AMAZON_SANDBOX === 'true'
+  ? 'https://sandbox.sellingpartnerapi-fe.amazon.com'   // sandbox — use with self-auth tokens
+  : 'https://sellingpartnerapi-fe.amazon.com';           // production — FE region (India/JP/AU)
 const AWS_REGION     = 'us-west-2';   // FE endpoint region for signing
 const AWS_SERVICE    = 'execute-api';
 const IN_MARKETPLACE = 'A21TJRUUN4KGV'; // Amazon India marketplace ID
