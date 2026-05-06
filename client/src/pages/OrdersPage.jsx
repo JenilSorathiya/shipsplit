@@ -116,7 +116,7 @@ export default function OrdersPage() {
     setLoading(true);
     try {
       const { data } = await api.get('/orders', {
-        params: { page: 1, limit: 500, sortBy: 'createdAt', sortOrder: 'desc' },
+        params: { page: 1, limit: 100, sortBy: 'createdAt', sortOrder: 'desc' },
       });
       // api interceptor unwraps envelope: data is the orders array
       setOrders(Array.isArray(data) ? data : []);
