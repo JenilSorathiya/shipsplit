@@ -170,11 +170,11 @@ exports.acceptOrder = async (req, res, next) => {
       returnAddress:   '',
     };
 
-    // Create label job record
+    // Create label job record ('order' = one label per order, valid enum value)
     const labelJob = await Label.create({
       userId:     req.user._id,
       orderIds:   [order._id],
-      splitType:  'none',
+      splitType:  'order',
       settings:   defaultSettings,
       status:     'processing',
       labelCount: 1,
@@ -202,7 +202,7 @@ exports.acceptOrder = async (req, res, next) => {
         const { files } = await pdfSvc.processLabels({
           pdfBuffer,
           orders:     [orderObj],
-          splitType:  'none',
+          splitType:  'order',
           settings:   defaultSettings,
           createZip:  false,
           jobId:      labelJob._id.toString(),
