@@ -64,6 +64,8 @@ api.interceptors.response.use(
     const body = response.data;
     if (body && typeof body === 'object' && body.success === true && 'data' in body) {
       response.data = body.data ?? null;
+      // Preserve pagination meta so callers can access response.meta.total etc.
+      if (body.meta) response.meta = body.meta;
     }
     return response;
   },

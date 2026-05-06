@@ -1,4 +1,5 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 import {
   CheckIcon, ChevronRightIcon, ChevronLeftIcon, TagIcon,
@@ -449,22 +450,7 @@ const LABEL_SIZES = [
   { id: 'CUSTOM',  label: 'Custom Size',       desc: 'Enter dims', w: '—',          preview: '—' },
 ];
 
-const SAMPLE_ORDERS = Array.from({ length: 12 }, (_, i) => {
-  const platforms = ['amazon', 'flipkart', 'meesho', 'myntra'];
-  const couriers  = ['Delhivery', 'Shiprocket', 'BlueDart', 'DTDC', 'Ekart'];
-  const skus      = ['KRT-NB-XL', 'SHO-MR-42', 'SAR-FP-OS', 'JNS-DB-32', 'BTL-SS-1L', 'DRS-WF-M'];
-  const plt       = platforms[i % 4];
-  const pfxMap    = { amazon: 'AMZ-406', flipkart: 'FK-OD', meesho: 'MSO-28', myntra: 'MYN' };
-  return {
-    id:      `${pfxMap[plt]}-${(7800000 + i * 137).toString()}`,
-    sku:     skus[i % skus.length],
-    product: ['Cotton Kurta Set', "Men's Running Shoes", 'Floral Saree', 'Slim Fit Jeans', 'Water Bottle', "Women's Dress"][i % 6],
-    platform: plt,
-    courier:  couriers[i % 5],
-    awb:      `DL${(40000000 + i * 7).toString()}`,
-    qty:      (i % 3) + 1,
-  };
-});
+/* SAMPLE_ORDERS removed — Step1 now fetches from /api/orders */
 
 const PLATFORM_STYLE = {
   amazon:   'bg-[#FF9900]/10 text-[#b36b00]',
@@ -509,16 +495,31 @@ function StepBar({ current }) {
   );
 }
 
-/* ── Step 1: Select orders ───────────────────────────── */
+/* ── Step 1: Select orders (fetches real orders from API) ── */
 function Step1({ selected, setSelected }) {
-  const [search, setSearch] = useState('');
-  const filtered = search
-    ? SAMPLE_ORDERS.filter((o) => o.id.includes(search) || o.sku.includes(search) || o.product.toLowerCase().includes(search.toLowerCase()))
-    : SAMPLE_ORDERS;
+  const [search,  setSearch]  = useState('');
+  const [orders,  setOrders]  = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const allSel = filtered.length > 0 && filtered.every((o) => selected.has(o.id));
+  useEffect(() => {
+    api.get('/orders', { params: { limit: 100, sortBy: 'createdAt', sortOrder: 'desc' } })
+      .then(({ data }) => setOrders(Array.isArray(data) ? data : []))
+      .catch(() => setOrders([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const q = search.toLowerCase();
+  const filtered = search
+    ? orders.filter((o) =>
+        (o.orderId     || '').toLowerCase().includes(q) ||
+        (o.productName || '').toLowerCase().includes(q) ||
+        (o.sku         || '').toLowerCase().includes(q)
+      )
+    : orders;
+
+  const allSel    = filtered.length > 0 && filtered.every((o) => selected.has(o._id));
   const toggle    = (id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const toggleAll = () => setSelected(allSel ? new Set() : new Set(filtered.map((o) => o.id)));
+  const toggleAll = () => setSelected(allSel ? new Set() : new Set(filtered.map((o) => o._id)));
 
   return (
     <div className="space-y-4">
@@ -559,24 +560,48 @@ function Step1({ selected, setSelected }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {filtered.map((o) => (
-              <tr key={o.id} className={selected.has(o.id) ? 'table-row-selected' : 'table-row'}>
-                <td className="table-td-check">
-                  <input type="checkbox" checked={selected.has(o.id)} onChange={() => toggle(o.id)} />
+            {loading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <tr key={i} className="table-row animate-pulse">
+                  <td className="table-td-check"><div className="h-4 w-4 bg-gray-100 rounded" /></td>
+                  <td className="table-td"><div className="h-3 w-28 bg-gray-100 rounded" /></td>
+                  <td className="table-td"><div className="h-3 w-36 bg-gray-100 rounded" /></td>
+                  <td className="table-td"><div className="h-3 w-16 bg-gray-100 rounded" /></td>
+                  <td className="table-td"><div className="h-5 w-14 bg-gray-100 rounded-md" /></td>
+                  <td className="table-td"><div className="h-3 w-18 bg-gray-100 rounded" /></td>
+                  <td className="table-td"><div className="h-3 w-20 bg-gray-100 rounded" /></td>
+                  <td className="table-td"><div className="h-3 w-4 bg-gray-100 rounded" /></td>
+                </tr>
+              ))
+            ) : filtered.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-4 py-12 text-center">
+                  <p className="text-sm text-gray-500 font-medium">No orders found</p>
+                  <p className="text-xs text-gray-400 mt-1">Go to Orders page and click <strong>Sync</strong> to import orders first.</p>
                 </td>
-                <td className="table-td font-mono text-xs font-semibold text-gray-800">{o.id}</td>
-                <td className="table-td text-xs text-gray-700 max-w-[140px]"><span className="truncate block">{o.product}</span></td>
-                <td className="table-td font-mono text-xs text-gray-500">{o.sku}</td>
-                <td className="table-td">
-                  <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-md capitalize ${PLATFORM_STYLE[o.platform]}`}>
-                    {o.platform}
-                  </span>
-                </td>
-                <td className="table-td text-xs">{o.courier}</td>
-                <td className="table-td font-mono text-xs text-gray-400">{o.awb}</td>
-                <td className="table-td text-center text-xs font-medium">{o.qty}</td>
               </tr>
-            ))}
+            ) : (
+              filtered.map((o) => (
+                <tr key={o._id} className={selected.has(o._id) ? 'table-row-selected' : 'table-row'}>
+                  <td className="table-td-check">
+                    <input type="checkbox" checked={selected.has(o._id)} onChange={() => toggle(o._id)} />
+                  </td>
+                  <td className="table-td font-mono text-xs font-semibold text-gray-800">{o.orderId || o._id}</td>
+                  <td className="table-td text-xs text-gray-700 max-w-[140px]">
+                    <span className="truncate block">{o.productName || o.items?.[0]?.name || '—'}</span>
+                  </td>
+                  <td className="table-td font-mono text-xs text-gray-500">{o.sku || '—'}</td>
+                  <td className="table-td">
+                    <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-md capitalize ${PLATFORM_STYLE[o.platform] || 'bg-gray-100 text-gray-600'}`}>
+                      {o.platform}
+                    </span>
+                  </td>
+                  <td className="table-td text-xs capitalize">{o.courierPartner || '—'}</td>
+                  <td className="table-td font-mono text-xs text-gray-400">{o.awb || '—'}</td>
+                  <td className="table-td text-center text-xs font-medium">{o.quantity ?? 1}</td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -921,12 +946,68 @@ export default function LabelGeneratorPage() {
     return true;
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
+    if (selected.size === 0) return;
     setDownloading(true);
-    setTimeout(() => {
-      setDownloading(false);
+    try {
+      // Map UI size to API pageSize / labelsPerPage
+      const sizeMap = {
+        A4_4:   { pageSize: 'A4', labelsPerPage: 4 },
+        A4_2:   { pageSize: 'A4', labelsPerPage: 2 },
+        A4_1:   { pageSize: 'A4', labelsPerPage: 1 },
+        A6_1:   { pageSize: 'A6', labelsPerPage: 1 },
+        CUSTOM: { pageSize: 'A4', labelsPerPage: 1 },
+      };
+      const pageSz = sizeMap[settings.size] || { pageSize: 'A4', labelsPerPage: 4 };
+
+      // 1. Start async generation
+      const { data: gen } = await api.post('/labels/generate', {
+        orderIds:  [...selected],
+        splitType: splitType || 'none',
+        settings:  {
+          ...pageSz,
+          showProductName: settings.showProductName,
+          showSKU:         settings.showSKU,
+          showOrderId:     settings.showOrderId,
+          showAWB:         settings.showAWB,
+          showBarcode:     settings.showBarcode,
+          returnAddress:   settings.returnAddress || '',
+        },
+      });
+      const labelId = gen?.labelId;
+      if (!labelId) throw new Error('Label generation failed to start');
+
+      // 2. Poll until ready (max 120 s, every 2 s)
+      let label = null;
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const { data: st } = await api.get(`/labels/${labelId}/status`);
+        label = st?.label;
+        if (label?.status === 'ready')  break;
+        if (label?.status === 'failed') throw new Error(label.error || 'Label generation failed');
+      }
+      if (!label || label.status !== 'ready') throw new Error('Label generation timed out');
+
+      // 3. Download first output file
+      const filename = label.files?.[0]?.name;
+      if (!filename) throw new Error('No output files were generated');
+
+      const resp = await api.get(`/labels/${labelId}/download/${encodeURIComponent(filename)}`, { responseType: 'blob' });
+      const url  = URL.createObjectURL(resp.data);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
       setDone(true);
-    }, 2500);
+    } catch (err) {
+      toast.error(err.response?.data?.message || err.message || 'Download failed');
+    } finally {
+      setDownloading(false);
+    }
   };
 
   /* ── Success screen ──────────────────────────────── */
