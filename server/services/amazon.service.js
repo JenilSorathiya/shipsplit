@@ -281,44 +281,131 @@ exports.fetchOrders = async (platform, { createdAfter, nextToken } = {}) => {
   // parameter combinations — arbitrary dates/marketplaces always 400.
   // Return mock orders so the full sync pipeline (fetch → save → UI) is testable.
   if (process.env.AMAZON_SANDBOX === 'true' && !nextToken) {
-    logger.info('Sandbox mode: returning mock orders (SP-API sandbox does not support arbitrary queries)');
-    return {
-      orders: [
-        {
-          AmazonOrderId:          'TEST-403-7648025',
-          PurchaseDate:           new Date(Date.now() - 2 * 86_400_000).toISOString(),
-          LastUpdateDate:         new Date().toISOString(),
-          OrderStatus:            'Unshipped',
-          FulfillmentChannel:     'MFN',
-          MarketplaceId:          platform.marketplaceId || IN_MARKETPLACE,
-          NumberOfItemsShipped:   0,
-          NumberOfItemsUnshipped: 1,
-          PaymentMethod:          'Other',
-          PaymentMethodDetails:   ['COD'],
-          IsReplacementOrder:     false,
-          IsBusinessOrder:        false,
-          IsPrime:                false,
-          IsPremiumOrder:         false,
-          IsGlobalExpressEnabled: false,
-          OrderType:              'StandardOrder',
-          ShipServiceLevel:       'Std IN Dom',
-          OrderTotal:             { CurrencyCode: 'INR', Amount: '499.00' },
-          ShippingAddress: {
-            Name:            'Test Customer',
-            AddressLine1:    '123 Sandbox Street',
-            City:            'Mumbai',
-            StateOrRegion:   'MH',
-            PostalCode:      '400001',
-            CountryCode:     'IN',
-          },
-          BuyerInfo: {
-            BuyerEmail: 'test-buyer@marketplace.amazon.com',
-            BuyerName:  'Test Customer',
-          },
+    logger.info('Sandbox mode: returning mock orders');
+    const now = Date.now();
+    const mockOrders = [
+      {
+        AmazonOrderId:          'TEST-401-1000001',
+        PurchaseDate:           new Date(now - 1 * 86_400_000).toISOString(),
+        LastUpdateDate:         new Date(now - 1 * 86_400_000).toISOString(),
+        OrderStatus:            'Unshipped',
+        FulfillmentChannel:     'MFN',
+        MarketplaceId:          platform.marketplaceId || IN_MARKETPLACE,
+        NumberOfItemsShipped:   0,
+        NumberOfItemsUnshipped: 1,
+        PaymentMethod:          'Other',
+        PaymentMethodDetails:   ['COD'],
+        OrderType:              'StandardOrder',
+        ShipServiceLevel:       'Std IN Dom',
+        OrderTotal:             { CurrencyCode: 'INR', Amount: '599.00' },
+        ShippingAddress: {
+          Name: 'Rahul Sharma', AddressLine1: '12 MG Road', AddressLine2: 'Andheri West',
+          City: 'Mumbai', StateOrRegion: 'MH', PostalCode: '400058', CountryCode: 'IN',
         },
-      ],
-      nextToken: null,
-    };
+        BuyerInfo: { BuyerEmail: 'rahul@example.com', BuyerName: 'Rahul Sharma' },
+      },
+      {
+        AmazonOrderId:          'TEST-402-2000002',
+        PurchaseDate:           new Date(now - 2 * 86_400_000).toISOString(),
+        LastUpdateDate:         new Date(now - 2 * 86_400_000).toISOString(),
+        OrderStatus:            'Unshipped',
+        FulfillmentChannel:     'MFN',
+        MarketplaceId:          platform.marketplaceId || IN_MARKETPLACE,
+        NumberOfItemsShipped:   0,
+        NumberOfItemsUnshipped: 2,
+        PaymentMethod:          'Other',
+        PaymentMethodDetails:   ['Standard'],
+        OrderType:              'StandardOrder',
+        ShipServiceLevel:       'Std IN Dom',
+        OrderTotal:             { CurrencyCode: 'INR', Amount: '1299.00' },
+        ShippingAddress: {
+          Name: 'Priya Nair', AddressLine1: '45 Gandhi Nagar', AddressLine2: 'Sector 4',
+          City: 'Bengaluru', StateOrRegion: 'KA', PostalCode: '560001', CountryCode: 'IN',
+        },
+        BuyerInfo: { BuyerEmail: 'priya@example.com', BuyerName: 'Priya Nair' },
+      },
+      {
+        AmazonOrderId:          'TEST-403-3000003',
+        PurchaseDate:           new Date(now - 3 * 86_400_000).toISOString(),
+        LastUpdateDate:         new Date(now - 3 * 86_400_000).toISOString(),
+        OrderStatus:            'Unshipped',
+        FulfillmentChannel:     'MFN',
+        MarketplaceId:          platform.marketplaceId || IN_MARKETPLACE,
+        NumberOfItemsShipped:   0,
+        NumberOfItemsUnshipped: 1,
+        PaymentMethod:          'Other',
+        PaymentMethodDetails:   ['COD'],
+        OrderType:              'StandardOrder',
+        ShipServiceLevel:       'Exp IN Dom',
+        OrderTotal:             { CurrencyCode: 'INR', Amount: '849.00' },
+        ShippingAddress: {
+          Name: 'Amit Verma', AddressLine1: '78 Civil Lines',
+          City: 'Delhi', StateOrRegion: 'DL', PostalCode: '110054', CountryCode: 'IN',
+        },
+        BuyerInfo: { BuyerEmail: 'amit@example.com', BuyerName: 'Amit Verma' },
+      },
+      {
+        AmazonOrderId:          'TEST-404-4000004',
+        PurchaseDate:           new Date(now - 4 * 86_400_000).toISOString(),
+        LastUpdateDate:         new Date(now - 4 * 86_400_000).toISOString(),
+        OrderStatus:            'Unshipped',
+        FulfillmentChannel:     'MFN',
+        MarketplaceId:          platform.marketplaceId || IN_MARKETPLACE,
+        NumberOfItemsShipped:   0,
+        NumberOfItemsUnshipped: 1,
+        PaymentMethod:          'Other',
+        PaymentMethodDetails:   ['Standard'],
+        OrderType:              'StandardOrder',
+        ShipServiceLevel:       'Std IN Dom',
+        OrderTotal:             { CurrencyCode: 'INR', Amount: '2499.00' },
+        ShippingAddress: {
+          Name: 'Sneha Kulkarni', AddressLine1: '22 FC Road', AddressLine2: 'Shivajinagar',
+          City: 'Pune', StateOrRegion: 'MH', PostalCode: '411005', CountryCode: 'IN',
+        },
+        BuyerInfo: { BuyerEmail: 'sneha@example.com', BuyerName: 'Sneha Kulkarni' },
+      },
+      {
+        AmazonOrderId:          'TEST-405-5000005',
+        PurchaseDate:           new Date(now - 5 * 86_400_000).toISOString(),
+        LastUpdateDate:         new Date(now - 5 * 86_400_000).toISOString(),
+        OrderStatus:            'Unshipped',
+        FulfillmentChannel:     'MFN',
+        MarketplaceId:          platform.marketplaceId || IN_MARKETPLACE,
+        NumberOfItemsShipped:   0,
+        NumberOfItemsUnshipped: 3,
+        PaymentMethod:          'Other',
+        PaymentMethodDetails:   ['COD'],
+        OrderType:              'StandardOrder',
+        ShipServiceLevel:       'Std IN Dom',
+        OrderTotal:             { CurrencyCode: 'INR', Amount: '1799.00' },
+        ShippingAddress: {
+          Name: 'Mohammed Khan', AddressLine1: '5 Linking Road', AddressLine2: 'Bandra West',
+          City: 'Mumbai', StateOrRegion: 'MH', PostalCode: '400050', CountryCode: 'IN',
+        },
+        BuyerInfo: { BuyerEmail: 'mkhan@example.com', BuyerName: 'Mohammed Khan' },
+      },
+      {
+        AmazonOrderId:          'TEST-406-6000006',
+        PurchaseDate:           new Date(now - 6 * 86_400_000).toISOString(),
+        LastUpdateDate:         new Date(now - 6 * 86_400_000).toISOString(),
+        OrderStatus:            'Unshipped',
+        FulfillmentChannel:     'MFN',
+        MarketplaceId:          platform.marketplaceId || IN_MARKETPLACE,
+        NumberOfItemsShipped:   0,
+        NumberOfItemsUnshipped: 1,
+        PaymentMethod:          'Other',
+        PaymentMethodDetails:   ['Standard'],
+        OrderType:              'StandardOrder',
+        ShipServiceLevel:       'Exp IN Dom',
+        OrderTotal:             { CurrencyCode: 'INR', Amount: '3299.00' },
+        ShippingAddress: {
+          Name: 'Anjali Singh', AddressLine1: '90 Park Street',
+          City: 'Kolkata', StateOrRegion: 'WB', PostalCode: '700016', CountryCode: 'IN',
+        },
+        BuyerInfo: { BuyerEmail: 'anjali@example.com', BuyerName: 'Anjali Singh' },
+      },
+    ];
+    return { orders: mockOrders, nextToken: null };
   }
   // ── End sandbox short-circuit ────────────────────────────────────────────
 
@@ -356,16 +443,26 @@ exports.fetchOrderItems = async (platform, orderId) => {
   // ── Sandbox short-circuit ────────────────────────────────────────────────
   if (process.env.AMAZON_SANDBOX === 'true') {
     logger.info(`Sandbox mode: returning mock order items for ${orderId}`);
+    // Return different products per order so labels look realistic
+    const SANDBOX_PRODUCTS = {
+      'TEST-401-1000001': { asin: 'B0PROD00001', sku: 'TSHIRT-BLU-L',  title: 'Men\'s Cotton T-Shirt (Blue, L)',        qty: 1, price: '599.00'  },
+      'TEST-402-2000002': { asin: 'B0PROD00002', sku: 'JEANS-BLK-32',  title: 'Slim Fit Black Jeans (32W)',             qty: 2, price: '649.50'  },
+      'TEST-403-3000003': { asin: 'B0PROD00003', sku: 'SNEAKER-WHT-9', title: 'Running Sneakers (White, Size 9)',       qty: 1, price: '849.00'  },
+      'TEST-404-4000004': { asin: 'B0PROD00004', sku: 'WATCH-BLK-01',  title: 'Analog Wrist Watch — Black Dial',       qty: 1, price: '2499.00' },
+      'TEST-405-5000005': { asin: 'B0PROD00005', sku: 'KURTA-WHT-M',   title: 'Cotton Kurta (White, M)',                qty: 3, price: '599.67'  },
+      'TEST-406-6000006': { asin: 'B0PROD00006', sku: 'BAG-LEATHER-01',title: 'Leather Laptop Bag 15.6"',              qty: 1, price: '3299.00' },
+    };
+    const p = SANDBOX_PRODUCTS[orderId] || { asin: 'B0SANDBOX01', sku: 'TEST-SKU-001', title: 'Sandbox Test Product', qty: 1, price: '499.00' };
     return [
       {
-        ASIN:              'B0SANDBOX01',
-        SellerSKU:         'TEST-SKU-001',
-        OrderItemId:       'TEST-ITEM-001',
-        Title:             'Sandbox Test Product',
-        QuantityOrdered:   1,
+        ASIN:              p.asin,
+        SellerSKU:         p.sku,
+        OrderItemId:       `ITEM-${orderId}`,
+        Title:             p.title,
+        QuantityOrdered:   p.qty,
         QuantityShipped:   0,
         IsGift:            'false',
-        ItemPrice:         { CurrencyCode: 'INR', Amount: '499.00' },
+        ItemPrice:         { CurrencyCode: 'INR', Amount: p.price },
         ItemTax:           { CurrencyCode: 'INR', Amount: '0.00' },
         ShippingPrice:     { CurrencyCode: 'INR', Amount: '0.00' },
         ShippingTax:       { CurrencyCode: 'INR', Amount: '0.00' },
@@ -430,7 +527,7 @@ exports.fetchShippingLabel = async (platform, shipmentId) => {
    Used in sandbox mode so the full accept→download flow can be tested.
    ══════════════════════════════════════════════════════════════════════ */
 
-async function generateSandboxLabelPDF(order, awb) {
+async function generateSandboxLabelPDF(order, awb, settings = {}) {
   const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 
   const doc  = await PDFDocument.create();
@@ -440,9 +537,10 @@ async function generateSandboxLabelPDF(order, awb) {
   const { width: W, height: H } = page.getSize();
 
   const black  = rgb(0, 0, 0);
-  const white  = rgb(1, 1, 1);
-  const orange = rgb(1, 0.6, 0);   // Amazon orange
+  const orange = rgb(1, 0.6, 0);
   const grey   = rgb(0.9, 0.9, 0.9);
+  const green  = rgb(0.1, 0.55, 0.1);
+  const red    = rgb(0.8, 0.1, 0.1);
 
   // ── Header bar ────────────────────────────────────────────────
   page.drawRectangle({ x: 0, y: H - 32, width: W, height: 32, color: orange });
@@ -462,11 +560,11 @@ async function generateSandboxLabelPDF(order, awb) {
   page.drawText('SHIP TO:', { x: 8, y, size: 7, font: bold, color: black }); y -= 13;
   page.drawText(String(order.buyerName || 'Test Customer'), { x: 8, y, size: 9, font: bold, color: black }); y -= 12;
   const addr = order.address || {};
-  if (addr.line1) { page.drawText(String(addr.line1).slice(0, 42), { x: 8, y, size: 8, font, color: black }); y -= 11; }
-  if (addr.line2) { page.drawText(String(addr.line2).slice(0, 42), { x: 8, y, size: 8, font, color: black }); y -= 11; }
+  if (addr.line1)  { page.drawText(String(addr.line1).slice(0, 42),  { x: 8, y, size: 8, font, color: black }); y -= 11; }
+  if (addr.line2)  { page.drawText(String(addr.line2).slice(0, 42),  { x: 8, y, size: 8, font, color: black }); y -= 11; }
   const cityLine = [addr.city, addr.state].filter(Boolean).join(', ');
-  if (cityLine) { page.drawText(cityLine, { x: 8, y, size: 8, font, color: black }); y -= 11; }
-  if (addr.pincode) { page.drawText(`PIN: ${addr.pincode}`, { x: 8, y, size: 8, font, color: black }); y -= 11; }
+  if (cityLine)    { page.drawText(cityLine, { x: 8, y, size: 8, font, color: black }); y -= 11; }
+  if (addr.pincode){ page.drawText(`PIN: ${addr.pincode}`, { x: 8, y, size: 8, font, color: black }); y -= 11; }
   if (order.buyerPhone) { page.drawText(`Ph: ${order.buyerPhone}`, { x: 8, y, size: 8, font, color: black }); y -= 11; }
 
   // ── Divider ───────────────────────────────────────────────────
@@ -479,11 +577,22 @@ async function generateSandboxLabelPDF(order, awb) {
   page.drawText(prodName, { x: 8, y, size: 8, font, color: black }); y -= 11;
   const sku = order.sku || order.items?.[0]?.sku || 'TEST-SKU-001';
   page.drawText(`SKU: ${sku}`, { x: 8, y, size: 8, font, color: black }); y -= 11;
-  page.drawText(`Qty: ${order.quantity || 1}`, { x: 8, y, size: 8, font, color: black });
-  page.drawText(`₹ ${order.orderValue || 0}${order.isCOD ? ' (COD)' : ''}`, { x: W - 80, y, size: 8, font: bold, color: black }); y -= 11;
+  page.drawText(`Qty: ${order.quantity || 1}`, { x: 8, y, size: 8, font, color: black }); y -= 11;
 
   // ── Divider ───────────────────────────────────────────────────
-  y -= 4;
+  y -= 3;
+  page.drawLine({ start: { x: 8, y }, end: { x: W - 8, y }, thickness: 0.5, color: black }); y -= 12;
+
+  // ── Payment Method ────────────────────────────────────────────
+  page.drawText('PAYMENT:', { x: 8, y, size: 7, font: bold, color: black });
+  const isCOD    = order.isCOD;
+  const codAmt   = order.codAmount || order.orderValue || 0;
+  const payColor = isCOD ? red : green;
+  const payLabel = isCOD ? `CASH ON DELIVERY  ₹${codAmt}` : 'PREPAID';
+  page.drawText(payLabel, { x: 70, y, size: 8, font: bold, color: payColor }); y -= 14;
+
+  // ── Divider ───────────────────────────────────────────────────
+  y -= 3;
   page.drawLine({ start: { x: 8, y }, end: { x: W - 8, y }, thickness: 0.5, color: black }); y -= 14;
 
   // ── AWB ───────────────────────────────────────────────────────
@@ -491,21 +600,30 @@ async function generateSandboxLabelPDF(order, awb) {
   page.drawText(String(awb), { x: 8, y, size: 11, font: bold, color: black }); y -= 18;
 
   // ── Simulated barcode strips ──────────────────────────────────
-  const barcodeY = y - 36;
+  const barcodeY = y - 30;
   let bx = 8;
   const awbStr = String(awb).replace(/[^A-Z0-9]/gi, '');
   for (let i = 0; i < 68; i++) {
     const thick = (awbStr.charCodeAt(i % awbStr.length) || 50) % 3 === 0;
     const bw    = thick ? 3 : 1.5;
     if (i % 2 === 0) {
-      page.drawRectangle({ x: bx, y: barcodeY, width: bw, height: 36, color: black });
+      page.drawRectangle({ x: bx, y: barcodeY, width: bw, height: 30, color: black });
     }
     bx += bw + 1;
     if (bx > W - 8) break;
   }
-  page.drawText(String(awb), {
-    x: 8, y: barcodeY - 12, size: 7, font, color: black,
-  });
+  page.drawText(String(awb), { x: 8, y: barcodeY - 11, size: 7, font, color: black });
+
+  // ── Return To (optional — drawn only when settings supply an address) ──
+  const hasReturn = settings.returnName || settings.returnAddress;
+  if (hasReturn) {
+    let ry = barcodeY - 26;
+    page.drawLine({ start: { x: 8, y: ry }, end: { x: W - 8, y: ry }, thickness: 0.5, color: black }); ry -= 12;
+    page.drawText('RETURN TO:', { x: 8, y: ry, size: 7, font: bold, color: black }); ry -= 12;
+    if (settings.returnName)    { page.drawText(String(settings.returnName).slice(0, 42),    { x: 8, y: ry, size: 8, font: bold, color: black }); ry -= 11; }
+    if (settings.returnAddress) { page.drawText(String(settings.returnAddress).slice(0, 42), { x: 8, y: ry, size: 8, font, color: black }); ry -= 11; }
+    if (settings.returnPhone)   { page.drawText(`Ph: ${settings.returnPhone}`,               { x: 8, y: ry, size: 8, font, color: black }); }
+  }
 
   // ── Footer ────────────────────────────────────────────────────
   page.drawRectangle({ x: 0, y: 0, width: W, height: 20, color: grey });
@@ -589,12 +707,12 @@ exports.getEligibleShippingServices = async (platform, order) => {
  *
  * In sandbox mode, returns a generated test label PDF without calling Amazon.
  */
-exports.createMFNShipment = async (platform, order, shippingServiceId) => {
+exports.createMFNShipment = async (platform, order, shippingServiceId, settings = {}) => {
   await ensureFreshToken(platform);
 
   if (process.env.AMAZON_SANDBOX === 'true') {
     const awb         = `AMZL${Date.now()}IN`;
-    const labelBuffer = await generateSandboxLabelPDF(order, awb);
+    const labelBuffer = await generateSandboxLabelPDF(order, awb, settings);
     logger.info(`[sandbox] created mock shipment for order ${order.orderId}, AWB: ${awb}`);
     return {
       shipmentId:  `SANDBOX-${order.orderId}`,
@@ -646,6 +764,59 @@ exports.createMFNShipment = async (platform, order, shippingServiceId) => {
     labelBuffer: content ? Buffer.from(content, 'base64') : null,
     labelFormat: label?.FileContents?.FileFormat || 'PDF',
   };
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   5e. CANCEL MFN SHIPMENT — DELETE /mfn/v0/shipments/{shipmentId}
+   Must be called before cancelling the order if a shipment was created.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Cancels an MFN shipment. In sandbox, returns success without calling Amazon.
+ */
+exports.cancelMFNShipment = async (platform, shipmentId) => {
+  await ensureFreshToken(platform);
+
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    logger.info(`[sandbox] cancelled MFN shipment ${shipmentId}`);
+    return { success: true };
+  }
+
+  await spRequest({ platform, method: 'DELETE', path: `/mfn/v0/shipments/${shipmentId}` });
+  logger.info(`[amazon] cancelled MFN shipment ${shipmentId}`);
+  return { success: true };
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   5f. CANCEL ORDER — POST /orders/v0/orders/{orderId}/cancellation
+   Notifies Amazon that the seller cannot fulfil the order.
+   Amazon cancellation reason codes accepted by SP-API:
+     NO_INVENTORY | PRICE_ERROR | SELLER_CANCEL | CUSTOMER_CANCEL
+   ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Requests order cancellation on Amazon. In sandbox, returns success immediately.
+ */
+exports.cancelAmazonOrder = async (platform, amazonOrderId, reason = 'SELLER_CANCEL') => {
+  await ensureFreshToken(platform);
+
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    logger.info(`[sandbox] cancelled order ${amazonOrderId}, reason: ${reason}`);
+    return { success: true };
+  }
+
+  await spRequest({
+    platform,
+    method: 'POST',
+    path:   `/orders/v0/orders/${amazonOrderId}/cancellation`,
+    body:   {
+      marketplaceId: process.env.AMAZON_MARKETPLACE_ID || 'A21TJRUUN4KGV',
+      reason,
+    },
+  });
+
+  logger.info(`[amazon] cancel requested for order ${amazonOrderId}, reason: ${reason}`);
+  return { success: true };
 };
 
 /* ══════════════════════════════════════════════════════════════════════

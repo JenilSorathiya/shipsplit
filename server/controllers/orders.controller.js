@@ -212,18 +212,19 @@ exports.acceptOrder = async (req, res, next) => {
 
               if (serviceId) {
                 // 2. Create shipment → Amazon returns AWB + label PDF
-                const shipment = await amazonSvc.createMFNShipment(platformDoc, orderObj, serviceId);
+                const shipment = await amazonSvc.createMFNShipment(platformDoc, orderObj, serviceId, defaultSettings);
 
                 if (shipment.labelBuffer) {
                   pdfBuffer = shipment.labelBuffer;
                   awb       = shipment.awb || awb;
                   logger.info(`[accept] Amazon MFN label for ${orderObj.orderId}, AWB: ${awb}`);
 
-                  // Update order with AWB + courier
+                  // Update order with AWB + shipmentId (needed for cancel later)
                   await Order.findByIdAndUpdate(order._id, {
                     awb,
-                    courierPartner:  'other',
-                    platformStatus:  'Shipped',
+                    shipmentId:     shipment.shipmentId || null,
+                    courierPartner: 'other',
+                    platformStatus: 'Shipped',
                   });
                 }
               }
@@ -335,5 +336,88 @@ exports.syncOrders = async (req, res, next) => {
     await platformDoc.save();
 
     success(res, { imported, skipped }, `Synced ${imported} new orders from ${platform}`);
+  } catch (err) { next(err); }
+};
+
+/* ── POST /orders/:id/reject  (cancel/reject an order) ──────────────────
+   Amazon workflow:
+     1. If a MFN shipment was already created → cancel it first
+     2. Notify Amazon the order is cancelled (cancel reason code)
+     3. Mark the local label as failed (if one exists)
+     4. Set order status → 'cancelled'
+   Allowed from statuses: pending, label_generated
+   Not allowed once shipped — must use the Returns flow instead.
+────────────────────────────────────────────────────────────────────────── */
+
+const VALID_CANCEL_REASONS = new Set([
+  'NO_INVENTORY',
+  'PRICE_ERROR',
+  'SELLER_CANCEL',
+  'CUSTOMER_CANCEL',
+]);
+
+exports.rejectOrder = async (req, res, next) => {
+  try {
+    const { reason = 'SELLER_CANCEL', reasonText } = req.body;
+
+    if (!VALID_CANCEL_REASONS.has(reason)) {
+      return next(AppError.badRequest(`Invalid cancellation reason. Must be one of: ${[...VALID_CANCEL_REASONS].join(', ')}`));
+    }
+
+    const order = await Order.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!order) return next(AppError.notFound('Order not found'));
+
+    if (!['pending', 'label_generated'].includes(order.status)) {
+      return next(AppError.badRequest(
+        `Cannot cancel an order with status '${order.status}'. Only pending or label_generated orders can be cancelled.`
+      ));
+    }
+
+    /* ── Amazon: cancel shipment + order on platform side ─────────────── */
+    if (order.platform === 'amazon') {
+      try {
+        const amazonSvc   = require('../services/amazon.service');
+        const platformDoc = await Platform
+          .findOne({ userId: req.user._id, platformName: 'amazon' })
+          .select('+_accessToken +_refreshToken');
+
+        if (platformDoc && platformDoc.isConnected) {
+          // Step 1: cancel the MFN shipment if one was created
+          if (order.shipmentId) {
+            await amazonSvc.cancelMFNShipment(platformDoc, order.shipmentId);
+            logger.info(`[reject] MFN shipment ${order.shipmentId} cancelled for order ${order.orderId}`);
+          }
+
+          // Step 2: tell Amazon the order is cancelled
+          await amazonSvc.cancelAmazonOrder(platformDoc, order.orderId, reason);
+          logger.info(`[reject] Amazon order ${order.orderId} cancelled, reason: ${reason}`);
+        }
+      } catch (amazonErr) {
+        // Log but don't block — cancel locally even if platform API fails
+        logger.warn(`[reject] Amazon API cancel failed (${amazonErr.message}) — proceeding with local cancellation`);
+      }
+    }
+
+    /* ── Cancel the label job if one exists ───────────────────────────── */
+    if (order.labelId) {
+      await Label.findByIdAndUpdate(order.labelId, {
+        status: 'failed',
+        error:  `Order cancelled by seller — ${reasonText || reason}`,
+      });
+    }
+
+    /* ── Update order ─────────────────────────────────────────────────── */
+    order.status                 = 'cancelled';
+    order.cancelledAt            = new Date();
+    order.platformStatus         = 'Cancelled';
+    order.cancellationReason     = reason;
+    order.cancellationReasonText = reasonText || '';
+    await order.save();
+
+    success(res, {
+      orderId:  order._id,
+      status:   'cancelled',
+      reason,
+    }, 'Order cancelled successfully');
   } catch (err) { next(err); }
 };

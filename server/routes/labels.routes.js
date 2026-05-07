@@ -35,6 +35,9 @@ router.get('/:id',                                  ctrl.getLabel);
 /* ── Job status (polled by frontend during async generation) ─────── */
 router.get('/:id/status', ctrl.getLabelStatus);
 
+/* ── Single-label download (order-type jobs) — no filename needed ─── */
+router.get('/:id/download-label', ctrl.downloadOrderLabel);
+
 /* ── Per-file download from a completed job ──────────────────────── */
 router.get('/:id/download/:filename', ctrl.downloadFile);
 

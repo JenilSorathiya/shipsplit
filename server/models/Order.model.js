@@ -82,9 +82,14 @@ const orderSchema = new mongoose.Schema({
   fulfillmentChannel: { type: String, enum: ['AFN', 'MFN', null], default: null },
   isGift:             { type: Boolean, default: false },
   giftMessage:        String,
+  shipmentId:         String,   // MFN shipmentId from createMFNShipment (needed for cancel)
 
   /* ── Label reference ──────────────────────────────── */
   labelId: { type: mongoose.Schema.Types.ObjectId, ref: 'Label' },
+
+  /* ── Cancellation ─────────────────────────────────── */
+  cancellationReason:     String,   // e.g. 'NO_INVENTORY', 'PRICE_ERROR', 'SELLER_CANCEL'
+  cancellationReasonText: String,   // free-text note from seller
 
   /* ── Timestamps ───────────────────────────────────── */
   platformCreatedAt: Date,

@@ -308,9 +308,12 @@ exports.downloadFile = async (req, res, next) => {
     if (!label) return next(AppError.notFound('Label job not found'));
     if (label.status !== 'ready') return next(AppError.badRequest('Label job is not ready'));
 
-    // Verify filename is one of the recorded output files
-    const validName = label.files?.some((f) => f.name === filename) ||
-                      filename === 'all_labels.zip';
+    // Verify filename is one of the recorded output files.
+    // For order-type labels whose files[] was not yet written (schema migration,
+    // ephemeral disk loss, or race condition), also allow a recompile attempt.
+    const inFilesArray   = label.files?.some((f) => f.name === filename);
+    const isOrderLabel   = label.splitType === 'order' && /^label_.+\.pdf$/.test(filename);
+    const validName      = inFilesArray || filename === 'all_labels.zip' || isOrderLabel;
     if (!validName) return next(AppError.notFound('File not found'));
 
     const filePath = path.join(
@@ -372,6 +375,85 @@ exports.downloadFile = async (req, res, next) => {
     );
 
     fs.createReadStream(filePath).pipe(res);
+  } catch (err) { next(err); }
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   GET /labels/:id/download-label
+   Download the single PDF for an order-type label job.
+   Works regardless of whether files[] was persisted — always falls
+   back to recompiling from the stored order data.
+══════════════════════════════════════════════════════════════════ */
+exports.downloadOrderLabel = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const label = await Label.findOne({ _id: id, userId: req.user._id })
+      .populate('orderIds')
+      .lean();
+
+    if (!label) return next(AppError.notFound('Label job not found'));
+
+    // If still generating, wait is needed
+    if (label.status === 'processing') {
+      return next(AppError.badRequest('Label is still generating — please wait a moment and try again'));
+    }
+
+    // Determine the filename: prefer what is stored, fall back to deriving it
+    const storedFile = label.files?.[0];
+    const order      = label.orderIds?.[0];
+    const filename   = storedFile?.name
+      || (order ? `label_${order.orderId || label._id}.pdf` : `label_${label._id}.pdf`);
+
+    // Try disk first
+    const filePath = path.join(process.cwd(), 'uploads', 'output', label._id.toString(), filename);
+    let fileExistsOnDisk = false;
+    try { await fsp.access(filePath); fileExistsOnDisk = true; } catch { /* missing */ }
+
+    if (fileExistsOnDisk) {
+      await Label.updateOne({ _id: id }, { $inc: { downloadCount: 1 }, $set: { lastDownloadAt: new Date() } });
+      res.set({
+        'Content-Type':        'application/pdf',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+      });
+      return fs.createReadStream(filePath).pipe(res);
+    }
+
+    // Recompile from order data
+    if (!label.orderIds?.length) {
+      return next(AppError.notFound('No order data found to generate label'));
+    }
+
+    logger.warn(`[downloadOrderLabel] ${filePath} not on disk — recompiling`);
+
+    const pdfBuffer = await pdfSvc.compileLabelsIntoPdf(label.orderIds, {
+      pageSize:      label.settings?.pageSize      || 'A4',
+      labelsPerPage: label.settings?.labelsPerPage || 1,
+      settings:      label.settings || {},
+    });
+
+    // Persist the file so future downloads hit disk
+    try {
+      const outDir = path.join(process.cwd(), 'uploads', 'output', label._id.toString());
+      await fsp.mkdir(outDir, { recursive: true });
+      await fsp.writeFile(path.join(outDir, filename), pdfBuffer);
+      await Label.findByIdAndUpdate(id, {
+        status:      'ready',
+        files:       [{ name: filename, url: `/uploads/output/${label._id}/${encodeURIComponent(filename)}`, pageCount: 1, orders: label.orderIds.map(o => o._id) }],
+        generatedAt: new Date(),
+        $inc:        { downloadCount: 1 },
+        $set:        { lastDownloadAt: new Date() },
+      });
+    } catch (saveErr) {
+      logger.warn('[downloadOrderLabel] could not persist recompiled PDF:', saveErr.message);
+    }
+
+    res.set({
+      'Content-Type':        'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length':      pdfBuffer.length,
+    });
+    return res.send(pdfBuffer);
   } catch (err) { next(err); }
 };
 

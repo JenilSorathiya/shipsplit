@@ -3,10 +3,104 @@ import {
   FunnelIcon, MagnifyingGlassIcon,
   ArrowDownTrayIcon, ArrowPathIcon, ChevronLeftIcon, ChevronRightIcon,
   EllipsisHorizontalIcon, TrashIcon, EyeIcon,
-  CalendarDaysIcon, XMarkIcon, CheckCircleIcon,
+  CalendarDaysIcon, XMarkIcon, CheckCircleIcon, NoSymbolIcon,
 } from '@heroicons/react/24/outline';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
+
+/* ── Amazon cancellation reason codes ───────────────────────────────── */
+const CANCEL_REASONS = [
+  { value: 'NO_INVENTORY',    label: 'Out of stock / No inventory' },
+  { value: 'PRICE_ERROR',     label: 'Price error on listing' },
+  { value: 'SELLER_CANCEL',   label: 'Unable to fulfil order' },
+  { value: 'CUSTOMER_CANCEL', label: 'Customer requested cancellation' },
+];
+
+/* ── Cancel / Reject confirmation modal ─────────────────────────────── */
+function RejectModal({ order, onConfirm, onClose, loading }) {
+  const [reason,     setReason]     = useState('NO_INVENTORY');
+  const [reasonText, setReasonText] = useState('');
+
+  const isLabelGenerated = order?.status === 'label_generated';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">
+              {isLabelGenerated ? 'Cancel Order' : 'Reject Order'}
+            </h2>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Order <span className="font-mono font-semibold">{order?.orderId}</span>
+              {isLabelGenerated && ' — this will also cancel the generated label'}
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100">
+            <XMarkIcon className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Cancellation reason</label>
+            <select
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="form-select w-full text-sm"
+            >
+              {CANCEL_REASONS.map((r) => (
+                <option key={r.value} value={r.value}>{r.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Additional notes <span className="text-gray-400 font-normal">(optional)</span>
+            </label>
+            <textarea
+              value={reasonText}
+              onChange={(e) => setReasonText(e.target.value)}
+              placeholder="e.g. Item damaged in warehouse"
+              rows={2}
+              className="form-input w-full text-sm resize-none"
+            />
+          </div>
+        </div>
+
+        {isLabelGenerated && (
+          <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <NoSymbolIcon className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-700">
+              A shipping label was already generated. Cancelling will also void that label and notify Amazon.
+            </p>
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="btn-secondary btn-sm flex-1"
+          >
+            Keep Order
+          </button>
+          <button
+            onClick={() => onConfirm(reason, reasonText)}
+            disabled={loading}
+            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 transition-colors disabled:opacity-60"
+          >
+            {loading
+              ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+              : <NoSymbolIcon  className="h-3.5 w-3.5" />
+            }
+            {loading ? 'Cancelling…' : (isLabelGenerated ? 'Cancel Order' : 'Reject Order')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const PLATFORM_OPTIONS = [
   { value: '', label: 'All Platforms' },
@@ -112,6 +206,10 @@ export default function OrdersPage() {
   const [acceptingIds,   setAcceptingIds]   = useState(new Set());
   const [downloadingIds, setDownloadingIds] = useState(new Set());
 
+  /* ── Reject / cancel state ──────────────────────────────── */
+  const [rejectTarget,  setRejectTarget]  = useState(null);  // order object being rejected
+  const [rejectingId,   setRejectingId]   = useState(null);  // orderId in flight
+
   /* ── Fetch orders ───────────────────────────────────────── */
   const fetchOrders = useCallback(async () => {
     setLoading(true);
@@ -122,12 +220,14 @@ export default function OrdersPage() {
       const list = Array.isArray(data) ? data : [];
       setOrders(list);
 
-      // Pre-populate labelStates from orders that already have a labelId
+      // Pre-populate labelStates from orders that already have a labelId.
+      // Use 'processing' so the polling effect checks the real status once,
+      // then upgrades to 'ready' (with filename) or 'failed'.
       setLabelStates((prev) => {
         const next = { ...prev };
         for (const o of list) {
           if (o.labelId && !next[o._id]) {
-            next[o._id] = { labelId: o.labelId, status: 'ready' };
+            next[o._id] = { labelId: o.labelId, status: 'processing' };
           }
         }
         return next;
@@ -155,7 +255,7 @@ export default function OrdersPage() {
             const { data } = await api.get(`/labels/${labelId}/status`);
             const label = data?.label;
             if (label?.status === 'ready') {
-              updates[orderId] = { labelId, status: 'ready', filename: label.files?.[0]?.name };
+              updates[orderId] = { labelId, status: 'ready' };
               toast.success('Label is ready — click Download Label!');
             } else if (label?.status === 'failed') {
               updates[orderId] = { labelId, status: 'failed' };
@@ -191,29 +291,18 @@ export default function OrdersPage() {
   };
 
   /* ── Download label for an order ───────────────────────── */
-  const handleDownloadLabel = async (orderId, labelId, filename) => {
+  const handleDownloadLabel = async (orderId, labelId) => {
     setDownloadingIds((prev) => new Set(prev).add(orderId));
     try {
-      let fname = filename;
-      if (!fname) {
-        const { data } = await api.get(`/labels/${labelId}/status`);
-        const label = data?.label;
-        if (label?.status === 'processing') {
-          toast('Label is still generating…');
-          return;
-        }
-        if (label?.status === 'failed') {
-          toast.error('Label generation failed');
-          return;
-        }
-        fname = label?.files?.[0]?.name;
-        if (!fname) { toast.error('No label file found'); return; }
-        setLabelStates((prev) => ({ ...prev, [orderId]: { ...prev[orderId], filename: fname } }));
-      }
       const resp = await api.get(
-        `/labels/${labelId}/download/${encodeURIComponent(fname)}`,
+        `/labels/${labelId}/download-label`,
         { responseType: 'blob' }
       );
+      // Extract filename from Content-Disposition header if available
+      const disposition = resp.headers?.['content-disposition'] || '';
+      const match       = disposition.match(/filename="?([^"]+)"?/);
+      const fname       = match?.[1] || `label_${labelId}.pdf`;
+
       const url = URL.createObjectURL(resp.data);
       const a   = document.createElement('a');
       a.href     = url;
@@ -224,9 +313,45 @@ export default function OrdersPage() {
       URL.revokeObjectURL(url);
       toast.success('Label downloaded!');
     } catch (err) {
-      toast.error('Download failed');
+      // responseType:'blob' means error bodies arrive as Blobs — parse them to get the message
+      let message = err.message || 'Download failed';
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          message = JSON.parse(text).message || message;
+        } catch { /* not JSON, keep generic message */ }
+      } else if (err.response?.data?.message) {
+        message = err.response.data.message;
+      }
+      toast.error(message);
     } finally {
       setDownloadingIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
+    }
+  };
+
+  /* ── Reject / cancel order ──────────────────────────────── */
+  const handleRejectOrder = async (reason, reasonText) => {
+    if (!rejectTarget) return;
+    const orderId = rejectTarget._id;
+    setRejectingId(orderId);
+    try {
+      await api.post(`/orders/${orderId}/reject`, { reason, reasonText });
+      toast.success('Order cancelled successfully');
+      setRejectTarget(null);
+      // Update local order list status
+      setOrders((prev) =>
+        prev.map((o) => o._id === orderId ? { ...o, status: 'cancelled' } : o)
+      );
+      // Clear any label state for this order
+      setLabelStates((prev) => {
+        const next = { ...prev };
+        delete next[orderId];
+        return next;
+      });
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to cancel order');
+    } finally {
+      setRejectingId(null);
     }
   };
 
@@ -430,7 +555,7 @@ export default function OrdersPage() {
                 const isDownloading  = downloadingIds.has(order._id);
                 // Order has a label if: local state has one OR DB has one
                 const hasLabel       = ls?.labelId || order.labelId;
-                const labelReady     = ls?.status === 'ready' || (order.labelId && !ls);
+                const labelReady     = ls?.status === 'ready';
 
                 return (
                   <tr key={order._id} className={isSel ? 'table-row-selected' : 'table-row'}>
@@ -469,53 +594,94 @@ export default function OrdersPage() {
                     <td className="table-td">
                       <div className="flex items-center gap-1.5 justify-end">
                         {isAccepting ? (
-                          /* Accepting spinner */
+                          /* Accepting in flight */
                           <span className="flex items-center gap-1.5 text-xs text-gray-500 px-2">
                             <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                             Accepting…
                           </span>
-                        ) : ls?.status === 'processing' ? (
-                          /* Label generating spinner */
-                          <span className="flex items-center gap-1.5 text-xs text-primary-600 px-2">
+                        ) : rejectingId === order._id ? (
+                          /* Rejecting in flight */
+                          <span className="flex items-center gap-1.5 text-xs text-red-500 px-2">
                             <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-                            Generating…
+                            Cancelling…
                           </span>
+                        ) : ls?.status === 'processing' ? (
+                          /* Label generating — allow cancel while generating */
+                          <>
+                            <span className="flex items-center gap-1.5 text-xs text-primary-600 px-1">
+                              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                              Generating…
+                            </span>
+                            <button
+                              onClick={() => setRejectTarget(order)}
+                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                              title="Cancel order"
+                            >
+                              <NoSymbolIcon className="h-3.5 w-3.5" />
+                            </button>
+                          </>
                         ) : ls?.status === 'failed' ? (
-                          /* Failed — retry */
-                          <button
-                            onClick={() => handleAccept(order._id)}
-                            className="text-xs text-red-600 hover:text-red-700 font-medium px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
-                          >
-                            Retry
-                          </button>
+                          /* Label failed — retry or reject */
+                          <>
+                            <button
+                              onClick={() => handleAccept(order._id)}
+                              className="text-xs text-primary-600 hover:text-primary-700 font-medium px-2 py-1 rounded-lg hover:bg-primary-50 transition-colors"
+                            >
+                              Retry
+                            </button>
+                            <button
+                              onClick={() => setRejectTarget(order)}
+                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                              title="Cancel order"
+                            >
+                              <NoSymbolIcon className="h-3.5 w-3.5" />
+                            </button>
+                          </>
                         ) : labelReady && hasLabel ? (
-                          /* Download Label */
-                          <button
-                            onClick={() => handleDownloadLabel(
-                              order._id,
-                              ls?.labelId || order.labelId,
-                              ls?.filename
-                            )}
-                            disabled={isDownloading}
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-success-50 text-success-700 border border-success-200 hover:bg-success-100 text-xs font-semibold transition-colors disabled:opacity-60"
-                          >
-                            {isDownloading
-                              ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-                              : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
-                            }
-                            {isDownloading ? 'Downloading…' : 'Download Label'}
-                          </button>
+                          /* Label ready — Download + Cancel */
+                          <>
+                            <button
+                              onClick={() => handleDownloadLabel(
+                                order._id,
+                                ls?.labelId || order.labelId
+                              )}
+                              disabled={isDownloading}
+                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-success-50 text-success-700 border border-success-200 hover:bg-success-100 text-xs font-semibold transition-colors disabled:opacity-60"
+                            >
+                              {isDownloading
+                                ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                                : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
+                              }
+                              {isDownloading ? 'Downloading…' : 'Download Label'}
+                            </button>
+                            <button
+                              onClick={() => setRejectTarget(order)}
+                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                              title="Cancel order"
+                            >
+                              <NoSymbolIcon className="h-3.5 w-3.5" />
+                            </button>
+                          </>
                         ) : displayStatus === 'pending' ? (
-                          /* Accept Order */
-                          <button
-                            onClick={() => handleAccept(order._id)}
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors shadow-sm"
-                          >
-                            <CheckCircleIcon className="h-3.5 w-3.5" />
-                            Accept Order
-                          </button>
+                          /* Pending — Accept + Reject side by side */
+                          <>
+                            <button
+                              onClick={() => handleAccept(order._id)}
+                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors shadow-sm"
+                            >
+                              <CheckCircleIcon className="h-3.5 w-3.5" />
+                              Accept
+                            </button>
+                            <button
+                              onClick={() => setRejectTarget(order)}
+                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold transition-colors"
+                            >
+                              <NoSymbolIcon className="h-3.5 w-3.5" />
+                              Reject
+                            </button>
+                          </>
                         ) : (
-                          /* Other statuses — just menu */
+                          /* Shipped / delivered / cancelled / returned — row menu only */
                           <RowMenu onView={() => {}} onDelete={() => {}} />
                         )}
                       </div>
@@ -569,6 +735,16 @@ export default function OrdersPage() {
           </div>
         )}
       </div>
+
+      {/* ── Reject / Cancel modal ───────────────────── */}
+      {rejectTarget && (
+        <RejectModal
+          order={rejectTarget}
+          loading={rejectingId === rejectTarget._id}
+          onConfirm={handleRejectOrder}
+          onClose={() => setRejectTarget(null)}
+        />
+      )}
     </div>
   );
 }

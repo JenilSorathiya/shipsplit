@@ -41,6 +41,15 @@ const labelSchema = new mongoose.Schema({
   pdfKey:        String,          // S3 key
   error:         String,
 
+  /* ── Generated output files (one entry per split file) ── */
+  files: [{
+    name:      String,
+    url:       String,
+    pageCount: { type: Number, default: 1 },
+    orders:    [{ type: mongoose.Schema.Types.ObjectId, ref: 'Order' }],
+    key:       String,
+  }],
+
   /* ── Source PDF (upload flow) ─────────────────────────── */
   sourcePdfKey:  String,          // S3 key of original upload
   batchId:       String,          // upload batch grouping
