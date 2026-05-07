@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   FunnelIcon, MagnifyingGlassIcon,
   ArrowDownTrayIcon, ArrowPathIcon, ChevronLeftIcon, ChevronRightIcon,
@@ -201,10 +201,14 @@ export default function OrdersPage() {
   const [page,     setPage]     = useState(1);
 
   /* ── Label action state ─────────────────────────────────── */
-  // { [orderId]: { labelId, status: 'processing'|'ready'|'failed', filename? } }
+  // { [orderId]: { labelId, status: 'processing'|'ready'|'failed' } }
   const [labelStates,    setLabelStates]    = useState({});
   const [acceptingIds,   setAcceptingIds]   = useState(new Set());
   const [downloadingIds, setDownloadingIds] = useState(new Set());
+
+  // Track which orders were accepted in this browser session.
+  // Only these show the "label ready" toast — avoids toast spam on page refresh.
+  const sessionAccepted = useRef(new Set());
 
   /* ── Reject / cancel state ──────────────────────────────── */
   const [rejectTarget,  setRejectTarget]  = useState(null);  // order object being rejected
@@ -256,10 +260,17 @@ export default function OrdersPage() {
             const label = data?.label;
             if (label?.status === 'ready') {
               updates[orderId] = { labelId, status: 'ready' };
-              toast.success('Amazon label is ready — click Download Label!');
+              // Only toast if accepted in this session (not on page refresh)
+              if (sessionAccepted.current.has(orderId)) {
+                toast.success('Amazon label is ready — click Download Label!');
+                sessionAccepted.current.delete(orderId);
+              }
             } else if (label?.status === 'failed') {
               updates[orderId] = { labelId, status: 'failed' };
-              toast.error(label?.error || 'Amazon could not generate a label for this order');
+              if (sessionAccepted.current.has(orderId)) {
+                toast.error(label?.error || 'Amazon could not generate a label for this order');
+                sessionAccepted.current.delete(orderId);
+              }
             }
           } catch { /* ignore transient errors */ }
         })
@@ -278,11 +289,12 @@ export default function OrdersPage() {
     try {
       const { data } = await api.post(`/orders/${orderId}/accept`);
       const labelId = data?.labelId;
+      sessionAccepted.current.add(orderId); // mark so polling can toast when ready
       setLabelStates((prev) => ({ ...prev, [orderId]: { labelId, status: 'processing' } }));
       setOrders((prev) =>
         prev.map((o) => o._id === orderId ? { ...o, status: 'label_generated', labelId } : o)
       );
-      toast.success('Order accepted — generating label…');
+      toast.success('Order accepted — Amazon is generating the label…');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to accept order');
     } finally {
@@ -372,6 +384,12 @@ export default function OrdersPage() {
   /* ── Client-side filter + paginate ─────────────────────── */
   const filtered = useMemo(() => {
     let data = orders;
+    // Hide cancelled orders by default — only show when user explicitly filters for them
+    if (status) {
+      data = data.filter((o) => o.status === status);
+    } else {
+      data = data.filter((o) => o.status !== 'cancelled');
+    }
     if (search) {
       const q = search.toLowerCase();
       data = data.filter((o) =>
@@ -382,7 +400,6 @@ export default function OrdersPage() {
       );
     }
     if (platform) data = data.filter((o) => o.platform === platform);
-    if (status)   data = data.filter((o) => o.status   === status);
     if (courier)  data = data.filter((o) => o.courierPartner === courier);
     return data;
   }, [orders, search, platform, status, courier]);

@@ -527,23 +527,10 @@ exports.fetchShippingLabel = async (platform, shipmentId) => {
 
 /**
  * Returns an array of eligible shipping service objects for an MFN order.
- * In sandbox mode returns a static test service.
+ * Calls Amazon's real API (sandbox or production based on AMAZON_SANDBOX env).
  */
 exports.getEligibleShippingServices = async (platform, order) => {
   await ensureFreshToken(platform);
-
-  if (process.env.AMAZON_SANDBOX === 'true') {
-    return [{
-      ShippingServiceId:           'AMAZON_SHIPPING_SAMEDAY',
-      ShippingServiceName:         'Amazon Easy Ship',
-      ShippingServiceOfferId:      'sandbox-offer-001',
-      Rate:                        { Amount: '0.00', CurrencyCode: 'INR' },
-      LatestShipDate:              new Date(Date.now() + 86_400_000).toISOString(),
-      LatestDeliveryDate:          new Date(Date.now() + 3 * 86_400_000).toISOString(),
-      CarrierName:                 'Amazon',
-      RequiresAdditionalSellerInputs: false,
-    }];
-  }
 
   const body = {
     ShipmentRequestDetails: {
@@ -646,16 +633,10 @@ exports.createMFNShipment = async (platform, order, shippingServiceId, settings 
    ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Cancels an MFN shipment. In sandbox, returns success without calling Amazon.
+ * Cancels an MFN shipment via Amazon's API.
  */
 exports.cancelMFNShipment = async (platform, shipmentId) => {
   await ensureFreshToken(platform);
-
-  if (process.env.AMAZON_SANDBOX === 'true') {
-    logger.info(`[sandbox] cancelled MFN shipment ${shipmentId}`);
-    return { success: true };
-  }
-
   await spRequest({ platform, method: 'DELETE', path: `/mfn/v0/shipments/${shipmentId}` });
   logger.info(`[amazon] cancelled MFN shipment ${shipmentId}`);
   return { success: true };
@@ -669,15 +650,11 @@ exports.cancelMFNShipment = async (platform, shipmentId) => {
    ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Requests order cancellation on Amazon. In sandbox, returns success immediately.
+ * Requests order cancellation on Amazon.
+ * Reason codes: NO_INVENTORY | PRICE_ERROR | SELLER_CANCEL | CUSTOMER_CANCEL
  */
 exports.cancelAmazonOrder = async (platform, amazonOrderId, reason = 'SELLER_CANCEL') => {
   await ensureFreshToken(platform);
-
-  if (process.env.AMAZON_SANDBOX === 'true') {
-    logger.info(`[sandbox] cancelled order ${amazonOrderId}, reason: ${reason}`);
-    return { success: true };
-  }
 
   await spRequest({
     platform,
