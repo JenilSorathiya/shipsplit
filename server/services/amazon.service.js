@@ -883,9 +883,13 @@ exports.normalizeOrder = function normalizeOrder(raw, items = []) {
     },
 
     // Financials
+    // Amazon uses PaymentMethod:'Other' with PaymentMethodDetails:['COD'] for COD orders
     orderValue: parseFloat(raw.OrderTotal?.Amount || 0),
-    isCOD:      raw.PaymentMethod === 'COD',
-    codAmount:  raw.PaymentMethod === 'COD' ? parseFloat(raw.OrderTotal?.Amount || 0) : 0,
+    isCOD: raw.PaymentMethod === 'COD'
+      || (Array.isArray(raw.PaymentMethodDetails) && raw.PaymentMethodDetails.includes('COD')),
+    codAmount: (raw.PaymentMethod === 'COD'
+      || (Array.isArray(raw.PaymentMethodDetails) && raw.PaymentMethodDetails.includes('COD')))
+        ? parseFloat(raw.OrderTotal?.Amount || 0) : 0,
 
     // Timestamps
     platformCreatedAt: raw.PurchaseDate ? new Date(raw.PurchaseDate) : null,
