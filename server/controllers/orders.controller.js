@@ -3,7 +3,6 @@ const fs               = require('fs');
 const Order            = require('../models/Order.model');
 const Label            = require('../models/Label.model');
 const Platform         = require('../models/Platform.model');
-const pdfSvc           = require('../services/pdfService');
 const AppError         = require('../utils/AppError');
 const { success, created, noContent, paginated } = require('../utils/response');
 const { parsePlatformCSV } = require('../services/csv.service');
@@ -159,23 +158,11 @@ exports.acceptOrder = async (req, res, next) => {
       return next(AppError.badRequest('Only pending orders can be accepted'));
     }
 
-    const defaultSettings = {
-      pageSize:        'A4',
-      labelsPerPage:   1,
-      showProductName: true,
-      showSKU:         true,
-      showOrderId:     true,
-      showAWB:         true,
-      showBarcode:     true,
-      returnAddress:   '',
-    };
-
-    // Create label job record ('order' = one label per order, valid enum value)
+    // Create label job record
     const labelJob = await Label.create({
       userId:     req.user._id,
       orderIds:   [order._id],
       splitType:  'order',
-      settings:   defaultSettings,
       status:     'processing',
       labelCount: 1,
     });
@@ -188,84 +175,64 @@ exports.acceptOrder = async (req, res, next) => {
     // Respond immediately — label generation is async
     created(res, { orderId: order._id, labelId: labelJob._id }, 'Order accepted — label generating');
 
-    // Background: get label from platform API (Amazon) or compile our own
+    // Background: call Amazon MFN API — Amazon provides the shipping label
     setImmediate(async () => {
       try {
         const orderObj  = order.toObject();
         const jobId     = labelJob._id.toString();
         const filename  = `label_${orderObj.orderId || jobId}.pdf`;
-        let   pdfBuffer = null;
-        let   awb       = orderObj.awb || null;
 
-        /* ── Amazon: use Merchant Fulfillment API to get real label ── */
-        if (orderObj.platform === 'amazon') {
-          try {
-            const amazonSvc  = require('../services/amazon.service');
-            const platformDoc = await Platform
-              .findOne({ userId: req.user._id, platformName: 'amazon' })
-              .select('+_accessToken +_refreshToken');
+        /* ── Amazon: use Merchant Fulfillment API — Amazon provides the label ── */
+        const amazonSvc   = require('../services/amazon.service');
+        const platformDoc = await Platform
+          .findOne({ userId: req.user._id, platformName: 'amazon' })
+          .select('+_accessToken +_refreshToken');
 
-            if (platformDoc && platformDoc.isConnected) {
-              // 1. Get eligible shipping services
-              const services   = await amazonSvc.getEligibleShippingServices(platformDoc, orderObj);
-              const serviceId  = services[0]?.ShippingServiceId;
-
-              if (serviceId) {
-                // 2. Create shipment → Amazon returns AWB + label PDF
-                const shipment = await amazonSvc.createMFNShipment(platformDoc, orderObj, serviceId, defaultSettings);
-
-                if (shipment.labelBuffer) {
-                  pdfBuffer = shipment.labelBuffer;
-                  awb       = shipment.awb || awb;
-                  logger.info(`[accept] Amazon MFN label for ${orderObj.orderId}, AWB: ${awb}`);
-
-                  // Update order with AWB + shipmentId (needed for cancel later)
-                  await Order.findByIdAndUpdate(order._id, {
-                    awb,
-                    shipmentId:     shipment.shipmentId || null,
-                    courierPartner: 'other',
-                    platformStatus: 'Shipped',
-                  });
-                }
-              }
-            }
-          } catch (amazonErr) {
-            logger.warn(`[accept] Amazon MFN failed (${amazonErr.message}) — falling back to compiled label`);
-          }
+        if (!platformDoc || !platformDoc.isConnected) {
+          throw new Error('Amazon account is not connected. Connect your Amazon seller account first.');
         }
 
-        /* ── Fallback: compile label from order data ─────────────── */
-        if (!pdfBuffer) {
-          pdfBuffer = await pdfSvc.compileLabelsIntoPdf([orderObj], {
-            pageSize:      defaultSettings.pageSize,
-            labelsPerPage: defaultSettings.labelsPerPage,
-            settings:      defaultSettings,
-          });
-        }
+        // 1. Get eligible shipping services from Amazon
+        const services  = await amazonSvc.getEligibleShippingServices(platformDoc, orderObj);
+        const serviceId = services[0]?.ShippingServiceId;
+        if (!serviceId) throw new Error('No eligible shipping services available for this order on Amazon');
 
-        /* ── Save PDF to disk ────────────────────────────────────── */
+        // 2. Create MFN shipment — Amazon returns the AWB + label PDF
+        const shipment = await amazonSvc.createMFNShipment(platformDoc, orderObj, serviceId);
+        if (!shipment.labelBuffer) throw new Error('Amazon did not return a shipping label for this order');
+
+        const pdfBuffer = shipment.labelBuffer;
+        const awb       = shipment.awb;
+
+        // 3. Save AWB + shipmentId on the order
+        await Order.findByIdAndUpdate(order._id, {
+          awb,
+          shipmentId:     shipment.shipmentId || null,
+          courierPartner: 'other',
+          platformStatus: 'Shipped',
+        });
+
+        /* ── Save the label Amazon gave us to disk ─────────────────── */
         const path = require('path');
         const fsp  = require('fs/promises');
-        const outDir  = path.join(process.cwd(), 'uploads', 'output', jobId);
+        const outDir = path.join(process.cwd(), 'uploads', 'output', jobId);
         await fsp.mkdir(outDir, { recursive: true });
         await fsp.writeFile(path.join(outDir, filename), pdfBuffer);
-
-        const outputFile = {
-          name:      filename,
-          url:       `/uploads/output/${jobId}/${encodeURIComponent(filename)}`,
-          pageCount: 1,
-          orders:    [orderObj._id],
-          key:       filename,
-        };
 
         await Label.findByIdAndUpdate(labelJob._id, {
           status:      'ready',
           pageCount:   1,
-          files:       [outputFile],
+          files: [{
+            name:      filename,
+            url:       `/uploads/output/${jobId}/${encodeURIComponent(filename)}`,
+            pageCount: 1,
+            orders:    [orderObj._id],
+            key:       filename,
+          }],
           generatedAt: new Date(),
         });
 
-        logger.info(`[accept] label ${labelJob._id} ready for order ${orderObj.orderId}`);
+        logger.info(`[accept] Amazon label ready — order ${orderObj.orderId}, AWB: ${awb}`);
       } catch (err) {
         logger.error(`[accept] label ${labelJob._id} failed:`, err.message);
         await Label.findByIdAndUpdate(labelJob._id, { status: 'failed', error: err.message });

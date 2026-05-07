@@ -256,10 +256,10 @@ export default function OrdersPage() {
             const label = data?.label;
             if (label?.status === 'ready') {
               updates[orderId] = { labelId, status: 'ready' };
-              toast.success('Label is ready — click Download Label!');
+              toast.success('Amazon label is ready — click Download Label!');
             } else if (label?.status === 'failed') {
               updates[orderId] = { labelId, status: 'failed' };
-              toast.error('Label generation failed');
+              toast.error(label?.error || 'Amazon could not generate a label for this order');
             }
           } catch { /* ignore transient errors */ }
         })

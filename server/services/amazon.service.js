@@ -522,119 +522,6 @@ exports.fetchShippingLabel = async (platform, shipmentId) => {
 };
 
 /* ══════════════════════════════════════════════════════════════════════
-   5b. SANDBOX LABEL GENERATOR
-   Builds a realistic-looking Amazon shipping label PDF using pdf-lib.
-   Used in sandbox mode so the full accept→download flow can be tested.
-   ══════════════════════════════════════════════════════════════════════ */
-
-async function generateSandboxLabelPDF(order, awb, settings = {}) {
-  const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
-
-  const doc  = await PDFDocument.create();
-  const page = doc.addPage([302, 453]); // A5 label size (107×160 mm → 302×453 pt)
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const { width: W, height: H } = page.getSize();
-
-  const black  = rgb(0, 0, 0);
-  const orange = rgb(1, 0.6, 0);
-  const grey   = rgb(0.9, 0.9, 0.9);
-  const green  = rgb(0.1, 0.55, 0.1);
-  const red    = rgb(0.8, 0.1, 0.1);
-
-  // ── Header bar ────────────────────────────────────────────────
-  page.drawRectangle({ x: 0, y: H - 32, width: W, height: 32, color: orange });
-  page.drawText('amazon', { x: 10, y: H - 22, size: 14, font: bold, color: black });
-  page.drawText('easy ship', { x: 10, y: H - 30, size: 7, font, color: black });
-  page.drawText('SHIPPING LABEL', { x: W - 110, y: H - 19, size: 9, font: bold, color: black });
-
-  // ── Order ID ──────────────────────────────────────────────────
-  page.drawRectangle({ x: 0, y: H - 54, width: W, height: 22, color: grey });
-  page.drawText('ORDER ID:', { x: 8, y: H - 48, size: 7, font: bold, color: black });
-  page.drawText(String(order.orderId || '').toUpperCase(), {
-    x: 70, y: H - 48, size: 9, font: bold, color: black,
-  });
-
-  // ── Ship To ───────────────────────────────────────────────────
-  let y = H - 70;
-  page.drawText('SHIP TO:', { x: 8, y, size: 7, font: bold, color: black }); y -= 13;
-  page.drawText(String(order.buyerName || 'Test Customer'), { x: 8, y, size: 9, font: bold, color: black }); y -= 12;
-  const addr = order.address || {};
-  if (addr.line1)  { page.drawText(String(addr.line1).slice(0, 42),  { x: 8, y, size: 8, font, color: black }); y -= 11; }
-  if (addr.line2)  { page.drawText(String(addr.line2).slice(0, 42),  { x: 8, y, size: 8, font, color: black }); y -= 11; }
-  const cityLine = [addr.city, addr.state].filter(Boolean).join(', ');
-  if (cityLine)    { page.drawText(cityLine, { x: 8, y, size: 8, font, color: black }); y -= 11; }
-  if (addr.pincode){ page.drawText(`PIN: ${addr.pincode}`, { x: 8, y, size: 8, font, color: black }); y -= 11; }
-  if (order.buyerPhone) { page.drawText(`Ph: ${order.buyerPhone}`, { x: 8, y, size: 8, font, color: black }); y -= 11; }
-
-  // ── Divider ───────────────────────────────────────────────────
-  y -= 4;
-  page.drawLine({ start: { x: 8, y }, end: { x: W - 8, y }, thickness: 0.5, color: black }); y -= 12;
-
-  // ── Product ───────────────────────────────────────────────────
-  page.drawText('PRODUCT:', { x: 8, y, size: 7, font: bold, color: black }); y -= 12;
-  const prodName = String(order.productName || order.items?.[0]?.name || 'Sandbox Test Product').slice(0, 42);
-  page.drawText(prodName, { x: 8, y, size: 8, font, color: black }); y -= 11;
-  const sku = order.sku || order.items?.[0]?.sku || 'TEST-SKU-001';
-  page.drawText(`SKU: ${sku}`, { x: 8, y, size: 8, font, color: black }); y -= 11;
-  page.drawText(`Qty: ${order.quantity || 1}`, { x: 8, y, size: 8, font, color: black }); y -= 11;
-
-  // ── Divider ───────────────────────────────────────────────────
-  y -= 3;
-  page.drawLine({ start: { x: 8, y }, end: { x: W - 8, y }, thickness: 0.5, color: black }); y -= 12;
-
-  // ── Payment Method ────────────────────────────────────────────
-  page.drawText('PAYMENT:', { x: 8, y, size: 7, font: bold, color: black });
-  const isCOD    = order.isCOD;
-  const codAmt   = order.codAmount || order.orderValue || 0;
-  const payColor = isCOD ? red : green;
-  const payLabel = isCOD ? `CASH ON DELIVERY  ₹${codAmt}` : 'PREPAID';
-  page.drawText(payLabel, { x: 70, y, size: 8, font: bold, color: payColor }); y -= 14;
-
-  // ── Divider ───────────────────────────────────────────────────
-  y -= 3;
-  page.drawLine({ start: { x: 8, y }, end: { x: W - 8, y }, thickness: 0.5, color: black }); y -= 14;
-
-  // ── AWB ───────────────────────────────────────────────────────
-  page.drawText('AWB / TRACKING:', { x: 8, y, size: 7, font: bold, color: black }); y -= 13;
-  page.drawText(String(awb), { x: 8, y, size: 11, font: bold, color: black }); y -= 18;
-
-  // ── Simulated barcode strips ──────────────────────────────────
-  const barcodeY = y - 30;
-  let bx = 8;
-  const awbStr = String(awb).replace(/[^A-Z0-9]/gi, '');
-  for (let i = 0; i < 68; i++) {
-    const thick = (awbStr.charCodeAt(i % awbStr.length) || 50) % 3 === 0;
-    const bw    = thick ? 3 : 1.5;
-    if (i % 2 === 0) {
-      page.drawRectangle({ x: bx, y: barcodeY, width: bw, height: 30, color: black });
-    }
-    bx += bw + 1;
-    if (bx > W - 8) break;
-  }
-  page.drawText(String(awb), { x: 8, y: barcodeY - 11, size: 7, font, color: black });
-
-  // ── Return To (optional — drawn only when settings supply an address) ──
-  const hasReturn = settings.returnName || settings.returnAddress;
-  if (hasReturn) {
-    let ry = barcodeY - 26;
-    page.drawLine({ start: { x: 8, y: ry }, end: { x: W - 8, y: ry }, thickness: 0.5, color: black }); ry -= 12;
-    page.drawText('RETURN TO:', { x: 8, y: ry, size: 7, font: bold, color: black }); ry -= 12;
-    if (settings.returnName)    { page.drawText(String(settings.returnName).slice(0, 42),    { x: 8, y: ry, size: 8, font: bold, color: black }); ry -= 11; }
-    if (settings.returnAddress) { page.drawText(String(settings.returnAddress).slice(0, 42), { x: 8, y: ry, size: 8, font, color: black }); ry -= 11; }
-    if (settings.returnPhone)   { page.drawText(`Ph: ${settings.returnPhone}`,               { x: 8, y: ry, size: 8, font, color: black }); }
-  }
-
-  // ── Footer ────────────────────────────────────────────────────
-  page.drawRectangle({ x: 0, y: 0, width: W, height: 20, color: grey });
-  page.drawText('Powered by ShipSplit  |  sandbox label', {
-    x: 8, y: 6, size: 7, font, color: rgb(0.4, 0.4, 0.4),
-  });
-
-  return Buffer.from(await doc.save());
-}
-
-/* ══════════════════════════════════════════════════════════════════════
    5c. GET ELIGIBLE SHIPPING SERVICES — POST /mfn/v0/eligibleShippingServices
    ══════════════════════════════════════════════════════════════════════ */
 
@@ -704,23 +591,10 @@ exports.getEligibleShippingServices = async (platform, order) => {
 /**
  * Creates an MFN shipment for the given order using the specified shipping service.
  * Returns { shipmentId, awb, labelBuffer, labelFormat }.
- *
- * In sandbox mode, returns a generated test label PDF without calling Amazon.
+ * Amazon provides the label — we do not generate one ourselves.
  */
 exports.createMFNShipment = async (platform, order, shippingServiceId, settings = {}) => {
   await ensureFreshToken(platform);
-
-  if (process.env.AMAZON_SANDBOX === 'true') {
-    const awb         = `AMZL${Date.now()}IN`;
-    const labelBuffer = await generateSandboxLabelPDF(order, awb, settings);
-    logger.info(`[sandbox] created mock shipment for order ${order.orderId}, AWB: ${awb}`);
-    return {
-      shipmentId:  `SANDBOX-${order.orderId}`,
-      awb,
-      labelBuffer,
-      labelFormat: 'PDF',
-    };
-  }
 
   const body = {
     ShipmentRequestDetails: {
