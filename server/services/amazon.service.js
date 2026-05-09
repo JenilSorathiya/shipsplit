@@ -323,6 +323,9 @@ exports.refreshAccessToken = async (platform) => {
  * Throws if refresh fails (caller should handle — likely needs reconnect).
  */
 async function ensureFreshToken(platform) {
+  // Sandbox mode: real tokens are not needed — skip refresh entirely
+  if (process.env.AMAZON_SANDBOX === 'true') return;
+
   const isExpired = !platform.tokenExpiresAt
     || platform.tokenExpiresAt < new Date(Date.now() + 60_000);
   if (!isExpired) return;
@@ -836,9 +839,23 @@ exports.normalizeOrder = function normalizeOrder(raw, items = []) {
  * @returns {{ imported: number, updated: number, errors: number }}
  */
 exports.syncUserOrders = async (userId, { daysAgo } = {}) => {
-  const platform = await Platform
+  let platform = await Platform
     .findOne({ userId, platformName: 'amazon', isConnected: true })
     .select('+_accessToken +_refreshToken');
+
+  /* ── Sandbox: auto-create a placeholder Platform if none exists ───── */
+  if (!platform && process.env.AMAZON_SANDBOX === 'true') {
+    platform = await Platform.findOneAndUpdate(
+      { userId, platformName: 'amazon' },
+      {
+        userId, platformName: 'amazon', isConnected: true,
+        marketplaceId: 'A21TJRUUN4KGV',
+        metadata: { sandbox: true, autoCreated: true },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    logger.info(`[amazon sandbox] auto-created Platform doc for user ${userId}`);
+  }
 
   if (!platform) throw new Error('Amazon account not connected for this user');
 

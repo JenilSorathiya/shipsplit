@@ -10,8 +10,8 @@ export function AuthProvider({ children }) {
   /* ── Check session on mount ──────────────────────────────────────────
      On page load we call /auth/me.  If a valid Bearer token is in
      sessionStorage the request interceptor adds it automatically.
-     If the access token is expired we try a silent refresh (which uses
-     the httpOnly refresh-token cookie or returns 401 if not logged in).
+     If the access token is expired we try a silent refresh using the
+     stored refresh token (localStorage) or the httpOnly cookie.
   ──────────────────────────────────────────────────────────────────── */
   const fetchMe = useCallback(async () => {
     try {
@@ -20,8 +20,13 @@ export function AuthProvider({ children }) {
     } catch {
       // Access token missing/expired — try a silent refresh first
       try {
-        const { data: refreshData } = await api.post('/auth/refresh-token');
-        if (refreshData?.accessToken) storeToken(refreshData.accessToken);
+        const storedRefresh = (() => {
+          try { return localStorage.getItem('_ss_rt') || undefined; } catch { return undefined; }
+        })();
+        const { data: refreshData } = await api.post('/auth/refresh-token',
+          storedRefresh ? { refreshToken: storedRefresh } : {}
+        );
+        if (refreshData?.accessToken) storeToken(refreshData.accessToken, refreshData.refreshToken);
         const { data } = await api.get('/auth/me');
         setUser(data.user);
       } catch {
@@ -37,15 +42,15 @@ export function AuthProvider({ children }) {
   /* ── Auth actions ──────────────────────────────────────────────────── */
   const login = async (email, password) => {
     const { data } = await api.post('/auth/login', { email, password });
-    // Store the access token so subsequent requests use Bearer header
-    if (data.accessToken) storeToken(data.accessToken);
+    // Store both tokens — refreshToken goes to localStorage for cross-domain persistence
+    if (data.accessToken) storeToken(data.accessToken, data.refreshToken);
     setUser(data.user);
     return data;
   };
 
   const register = async (name, email, password, phone) => {
     const { data } = await api.post('/auth/register', { name, email, password, phone });
-    if (data.accessToken) storeToken(data.accessToken);
+    if (data.accessToken) storeToken(data.accessToken, data.refreshToken);
     setUser(data.user);
     return data;
   };

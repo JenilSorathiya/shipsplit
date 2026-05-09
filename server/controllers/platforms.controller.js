@@ -147,20 +147,35 @@ exports.syncPlatform = async (req, res, next) => {
       return next(AppError.badRequest(`Manual sync via API not supported for ${name}`));
     }
 
-    // Check connection before calling the service so we return 400 not 500
-    const platform = await Platform
-      .findOne({ userId: req.user._id, platformName: 'amazon', isConnected: true })
-      .select('+_accessToken +_refreshToken');
+    const isSandbox = process.env.AMAZON_SANDBOX === 'true';
 
-    if (!platform) {
-      return next(AppError.badRequest(
-        'Amazon account is not connected. Go to Settings → Platforms to connect your Amazon seller account.'
-      ));
+    // In production: require a connected Platform doc before proceeding
+    if (!isSandbox) {
+      const platform = await Platform
+        .findOne({ userId: req.user._id, platformName: 'amazon', isConnected: true })
+        .select('+_accessToken +_refreshToken');
+
+      if (!platform) {
+        return next(AppError.badRequest(
+          'Amazon account is not connected. Go to Settings → Platforms to connect your Amazon seller account.'
+        ));
+      }
     }
+    // In sandbox: syncUserOrders auto-creates the Platform doc if missing
 
-    const result = await amazonSvc.syncUserOrders(req.user._id, {
-      daysAgo: Number(req.body.daysAgo) || 7,
-    });
+    let result;
+    try {
+      result = await amazonSvc.syncUserOrders(req.user._id, {
+        daysAgo: Number(req.body?.daysAgo) || 7,
+      });
+    } catch (svcErr) {
+      // Convert service-layer errors to friendly 400s instead of 500s
+      const msg = svcErr.message || 'Sync failed';
+      if (msg.includes('not connected') || msg.includes('token expired') || msg.includes('reconnect')) {
+        return next(AppError.badRequest(msg));
+      }
+      throw svcErr;  // unknown error — let errorHandler give 500
+    }
 
     success(
       res,
@@ -169,8 +184,11 @@ exports.syncPlatform = async (req, res, next) => {
         updated:  result.updated,
         errors:   result.errors,
         syncedAt: new Date(),
+        sandbox:  isSandbox,
       },
-      `Amazon sync complete — ${result.imported} new orders, ${result.updated} updated`
+      isSandbox
+        ? `[Sandbox] Synced ${result.imported} mock orders`
+        : `Amazon sync complete — ${result.imported} new, ${result.updated} updated`
     );
   } catch (err) { next(err); }
 };

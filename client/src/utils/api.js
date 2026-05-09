@@ -1,32 +1,47 @@
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
-/* ── Access-token store ──────────────────────────────────────────────────
+/* ── Token store ─────────────────────────────────────────────────────────
    The server sets httpOnly cookies, but cross-domain (Vercel → Render) the
    browser blocks them with sameSite restrictions.
-   Solution: server ALSO returns the accessToken in the response body.
-   We keep it in memory + sessionStorage (cleared on tab close) and send it
-   as an Authorization: Bearer header on every request.
-   The auth middleware already accepts both cookies AND Bearer tokens.
+
+   Solution:
+   - Server returns accessToken + refreshToken in the response body.
+   - Access token  → memory + sessionStorage  (cleared on tab close)
+   - Refresh token → localStorage             (persists across tabs/reloads)
+   Both are sent explicitly so cookies are never relied upon cross-domain.
 ────────────────────────────────────────────────────────────────────────── */
-const _KEY = '_ss_at';
+const _AT_KEY = '_ss_at';   // access token  – sessionStorage
+const _RT_KEY = '_ss_rt';   // refresh token – localStorage
 let _token = null;
 
-// Restore from sessionStorage on page load (survives F5 refresh)
+// Restore access token from sessionStorage on page load (survives F5 refresh)
 try {
-  const t = sessionStorage.getItem(_KEY);
+  const t = sessionStorage.getItem(_AT_KEY);
   if (t) _token = t;
 } catch { /* ignore – privacy mode may block sessionStorage */ }
 
-export const storeToken = (token) => {
-  _token = token || null;
+export const storeToken = (accessToken, refreshToken) => {
+  _token = accessToken || null;
   try {
-    if (token) sessionStorage.setItem(_KEY, token);
-    else        sessionStorage.removeItem(_KEY);
+    if (accessToken) sessionStorage.setItem(_AT_KEY, accessToken);
+    else             sessionStorage.removeItem(_AT_KEY);
   } catch { /* ignore */ }
+  if (refreshToken !== undefined) {
+    try {
+      if (refreshToken) localStorage.setItem(_RT_KEY, refreshToken);
+      else              localStorage.removeItem(_RT_KEY);
+    } catch { /* ignore */ }
+  }
 };
 
-export const clearStoredToken = () => storeToken(null);
+export const clearStoredToken = () => {
+  storeToken(null, null);
+};
+
+const getStoredRefreshToken = () => {
+  try { return localStorage.getItem(_RT_KEY) || null; } catch { return null; }
+};
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
@@ -102,9 +117,14 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
-        // Refresh returns { accessToken } — store it for Bearer auth
-        const { data: refreshData } = await api.post('/auth/refresh-token');
-        if (refreshData?.accessToken) storeToken(refreshData.accessToken);
+        // Send refresh token in body — cookies may be blocked cross-domain (Vercel→Render)
+        const storedRefresh = getStoredRefreshToken();
+        const { data: refreshData } = await api.post('/auth/refresh-token',
+          storedRefresh ? { refreshToken: storedRefresh } : {}
+        );
+        if (refreshData?.accessToken) {
+          storeToken(refreshData.accessToken, refreshData.refreshToken);
+        }
         processQueue(null);
         return api(originalRequest);             // retry original request
       } catch (refreshErr) {

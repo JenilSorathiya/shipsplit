@@ -38,7 +38,7 @@ exports.register = async (req, res, next) => {
     const { accessToken, refreshToken } = generateTokens(user._id);
     setTokenCookies(res, accessToken, refreshToken);
 
-    created(res, { user: user.toSafeObject(), accessToken }, 'Account created successfully');
+    created(res, { user: user.toSafeObject(), accessToken, refreshToken }, 'Account created successfully');
   } catch (err) { next(err); }
 };
 
@@ -60,7 +60,8 @@ exports.login = async (req, res, next) => {
     const { accessToken, refreshToken } = generateTokens(user._id);
     setTokenCookies(res, accessToken, refreshToken);
 
-    success(res, { user: user.toSafeObject(), accessToken }, 'Login successful');
+    // Return refreshToken in body so cross-domain clients (Vercel→Render) can store it
+    success(res, { user: user.toSafeObject(), accessToken, refreshToken }, 'Login successful');
   } catch (err) { next(err); }
 };
 
@@ -113,7 +114,8 @@ exports.changePassword = async (req, res, next) => {
 /* ── Refresh token ───────────────────────────────────────────────────── */
 exports.refreshToken = async (req, res, next) => {
   try {
-    const token = req.cookies.refreshToken;
+    // Accept from cookie (same-domain) OR from body (cross-domain: Vercel → Render)
+    const token = req.cookies?.refreshToken || req.body?.refreshToken;
     if (!token) return next(AppError.unauthorized('No refresh token'));
 
     const { verifyRefreshToken } = require('../utils/jwt.utils');
@@ -125,7 +127,8 @@ exports.refreshToken = async (req, res, next) => {
     const { accessToken, refreshToken: newRefresh } = generateTokens(user._id);
     setTokenCookies(res, accessToken, newRefresh);
 
-    success(res, { accessToken });
+    // Return both tokens — client stores refreshToken for cross-domain requests
+    success(res, { accessToken, refreshToken: newRefresh });
   } catch (err) { next(err); }
 };
 
