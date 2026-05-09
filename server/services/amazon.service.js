@@ -473,7 +473,7 @@ exports.fetchShippingLabel = async (platform, shipmentId) => {
    Produces a realistic Amazon Easy Ship label when AMAZON_SANDBOX=true.
    ══════════════════════════════════════════════════════════════════════ */
 
-async function generateSandboxLabelPDF(order, awb) {
+exports.generateSandboxLabelPDF = async function generateSandboxLabelPDF(order, awb) {
   const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 
   // A5 landscape — 419 × 298 pt  (Amazon Easy Ship default)
@@ -651,7 +651,7 @@ exports.createMFNShipment = async (platform, order, shippingServiceId, settings 
   if (process.env.AMAZON_SANDBOX === 'true') {
     const awb         = `AMZL${Date.now()}IN`;
     const shipmentId  = `SANDBOX-${order.orderId}`;
-    const labelBuffer = await generateSandboxLabelPDF(order, awb);
+    const labelBuffer = await exports.generateSandboxLabelPDF(order, awb);
     logger.info(`[amazon sandbox] createMFNShipment → AWB ${awb}`);
     return { shipmentId, awb, labelBuffer, labelFormat: 'PDF' };
   }

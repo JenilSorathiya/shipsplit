@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   FunnelIcon, MagnifyingGlassIcon,
   ArrowDownTrayIcon, ArrowPathIcon, ChevronLeftIcon, ChevronRightIcon,
@@ -201,14 +201,8 @@ export default function OrdersPage() {
   const [page,     setPage]     = useState(1);
 
   /* ── Label action state ─────────────────────────────────── */
-  // { [orderId]: { labelId, status: 'processing'|'ready'|'failed' } }
-  const [labelStates,    setLabelStates]    = useState({});
   const [acceptingIds,   setAcceptingIds]   = useState(new Set());
   const [downloadingIds, setDownloadingIds] = useState(new Set());
-
-  // Track which orders were accepted in this browser session.
-  // Only these show the "label ready" toast — avoids toast spam on page refresh.
-  const sessionAccepted = useRef(new Set());
 
   /* ── Reject / cancel state ──────────────────────────────── */
   const [rejectTarget,  setRejectTarget]  = useState(null);  // order object being rejected
@@ -221,21 +215,7 @@ export default function OrdersPage() {
       const { data } = await api.get('/orders', {
         params: { page: 1, limit: 100, sortBy: 'createdAt', sortOrder: 'desc' },
       });
-      const list = Array.isArray(data) ? data : [];
-      setOrders(list);
-
-      // Pre-populate labelStates from orders that already have a labelId.
-      // Use 'processing' so the polling effect checks the real status once,
-      // then upgrades to 'ready' (with filename) or 'failed'.
-      setLabelStates((prev) => {
-        const next = { ...prev };
-        for (const o of list) {
-          if (o.labelId && !next[o._id]) {
-            next[o._id] = { labelId: o.labelId, status: 'processing' };
-          }
-        }
-        return next;
-      });
+      setOrders(Array.isArray(data) ? data : []);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to load orders');
       setOrders([]);
@@ -246,55 +226,20 @@ export default function OrdersPage() {
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
-  /* ── Poll label jobs that are still 'processing' ────────── */
-  useEffect(() => {
-    const processing = Object.entries(labelStates).filter(([, v]) => v.status === 'processing');
-    if (processing.length === 0) return;
-
-    const timer = setInterval(async () => {
-      const updates = {};
-      await Promise.allSettled(
-        processing.map(async ([orderId, { labelId }]) => {
-          try {
-            const { data } = await api.get(`/labels/${labelId}/status`);
-            const label = data?.label;
-            if (label?.status === 'ready') {
-              updates[orderId] = { labelId, status: 'ready' };
-              // Only toast if accepted in this session (not on page refresh)
-              if (sessionAccepted.current.has(orderId)) {
-                toast.success('Amazon label is ready — click Download Label!');
-                sessionAccepted.current.delete(orderId);
-              }
-            } else if (label?.status === 'failed') {
-              updates[orderId] = { labelId, status: 'failed' };
-              if (sessionAccepted.current.has(orderId)) {
-                toast.error(label?.error || 'Amazon could not generate a label for this order');
-                sessionAccepted.current.delete(orderId);
-              }
-            }
-          } catch { /* ignore transient errors */ }
-        })
-      );
-      if (Object.keys(updates).length > 0) {
-        setLabelStates((prev) => ({ ...prev, ...updates }));
-      }
-    }, 3000);
-
-    return () => clearInterval(timer);
-  }, [labelStates]);
-
-  /* ── Accept order → auto-generate label ────────────────── */
+  /* ── Accept order → label immediately ready ────────────── */
   const handleAccept = async (orderId) => {
     setAcceptingIds((prev) => new Set(prev).add(orderId));
     try {
       const { data } = await api.post(`/orders/${orderId}/accept`);
-      const labelId = data?.labelId;
-      sessionAccepted.current.add(orderId); // mark so polling can toast when ready
-      setLabelStates((prev) => ({ ...prev, [orderId]: { labelId, status: 'processing' } }));
+      // Server returns { orderId, awb, shipmentId } synchronously — label ready now
       setOrders((prev) =>
-        prev.map((o) => o._id === orderId ? { ...o, status: 'label_generated', labelId } : o)
+        prev.map((o) =>
+          o._id === orderId
+            ? { ...o, status: 'label_generated', awb: data?.awb, shipmentId: data?.shipmentId }
+            : o
+        )
       );
-      toast.success('Order accepted — Amazon is generating the label…');
+      toast.success('Order accepted — label ready to download!');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to accept order');
     } finally {
@@ -302,18 +247,15 @@ export default function OrdersPage() {
     }
   };
 
-  /* ── Download label for an order ───────────────────────── */
-  const handleDownloadLabel = async (orderId, labelId) => {
+  /* ── Download label — fetches fresh from server (never cached) ─────── */
+  const handleDownloadLabel = async (orderId, orderIdStr) => {
     setDownloadingIds((prev) => new Set(prev).add(orderId));
     try {
-      const resp = await api.get(
-        `/labels/${labelId}/download-label`,
-        { responseType: 'blob' }
-      );
-      // Extract filename from Content-Disposition header if available
+      // GET /orders/:id/label — server streams PDF directly, no disk storage
+      const resp = await api.get(`/orders/${orderId}/label`, { responseType: 'blob' });
       const disposition = resp.headers?.['content-disposition'] || '';
       const match       = disposition.match(/filename="?([^"]+)"?/);
-      const fname       = match?.[1] || `label_${labelId}.pdf`;
+      const fname       = match?.[1] || `label_${orderIdStr || orderId}.pdf`;
 
       const url = URL.createObjectURL(resp.data);
       const a   = document.createElement('a');
@@ -325,13 +267,12 @@ export default function OrdersPage() {
       URL.revokeObjectURL(url);
       toast.success('Label downloaded!');
     } catch (err) {
-      // responseType:'blob' means error bodies arrive as Blobs — parse them to get the message
       let message = err.message || 'Download failed';
       if (err.response?.data instanceof Blob) {
         try {
           const text = await err.response.data.text();
           message = JSON.parse(text).message || message;
-        } catch { /* not JSON, keep generic message */ }
+        } catch { /* not JSON */ }
       } else if (err.response?.data?.message) {
         message = err.response.data.message;
       }
@@ -354,12 +295,6 @@ export default function OrdersPage() {
       setOrders((prev) =>
         prev.map((o) => o._id === orderId ? { ...o, status: 'cancelled' } : o)
       );
-      // Clear any label state for this order
-      setLabelStates((prev) => {
-        const next = { ...prev };
-        delete next[orderId];
-        return next;
-      });
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to cancel order');
     } finally {
@@ -388,7 +323,6 @@ export default function OrdersPage() {
       const { data } = await api.delete('/orders');
       toast.success(`Cleared ${data?.deleted ?? 0} orders`);
       setOrders([]);
-      setLabelStates({});
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to clear orders');
     }
@@ -583,12 +517,8 @@ export default function OrdersPage() {
                 const displayProduct = order.productName || order.items?.[0]?.name || '—';
                 const displaySku     = order.sku || order.items?.[0]?.sku || '—';
                 const displayStatus  = order.status || 'pending';
-                const ls             = labelStates[order._id];
                 const isAccepting    = acceptingIds.has(order._id);
                 const isDownloading  = downloadingIds.has(order._id);
-                // Order has a label if: local state has one OR DB has one
-                const hasLabel       = ls?.labelId || order.labelId;
-                const labelReady     = ls?.status === 'ready';
 
                 return (
                   <tr key={order._id} className={isSel ? 'table-row-selected' : 'table-row'}>
@@ -627,57 +557,22 @@ export default function OrdersPage() {
                     <td className="table-td">
                       <div className="flex items-center gap-1.5 justify-end">
                         {isAccepting ? (
-                          /* Accepting in flight */
+                          /* Accept API call in flight */
                           <span className="flex items-center gap-1.5 text-xs text-gray-500 px-2">
                             <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                             Accepting…
                           </span>
                         ) : rejectingId === order._id ? (
-                          /* Rejecting in flight */
+                          /* Reject/cancel API call in flight */
                           <span className="flex items-center gap-1.5 text-xs text-red-500 px-2">
                             <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                             Cancelling…
                           </span>
-                        ) : ls?.status === 'processing' ? (
-                          /* Label generating — allow cancel while generating */
-                          <>
-                            <span className="flex items-center gap-1.5 text-xs text-primary-600 px-1">
-                              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-                              Generating…
-                            </span>
-                            <button
-                              onClick={() => setRejectTarget(order)}
-                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                              title="Cancel order"
-                            >
-                              <NoSymbolIcon className="h-3.5 w-3.5" />
-                            </button>
-                          </>
-                        ) : ls?.status === 'failed' ? (
-                          /* Label failed — retry or reject */
+                        ) : displayStatus === 'label_generated' ? (
+                          /* Label ready immediately after accept — Download + Cancel */
                           <>
                             <button
-                              onClick={() => handleAccept(order._id)}
-                              className="text-xs text-primary-600 hover:text-primary-700 font-medium px-2 py-1 rounded-lg hover:bg-primary-50 transition-colors"
-                            >
-                              Retry
-                            </button>
-                            <button
-                              onClick={() => setRejectTarget(order)}
-                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                              title="Cancel order"
-                            >
-                              <NoSymbolIcon className="h-3.5 w-3.5" />
-                            </button>
-                          </>
-                        ) : labelReady && hasLabel ? (
-                          /* Label ready — Download + Cancel */
-                          <>
-                            <button
-                              onClick={() => handleDownloadLabel(
-                                order._id,
-                                ls?.labelId || order.labelId
-                              )}
+                              onClick={() => handleDownloadLabel(order._id, order.orderId)}
                               disabled={isDownloading}
                               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-success-50 text-success-700 border border-success-200 hover:bg-success-100 text-xs font-semibold transition-colors disabled:opacity-60"
                             >

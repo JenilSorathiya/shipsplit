@@ -157,7 +157,12 @@ exports.bulkAssignCourier = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-/* ── POST /orders/:id/accept  (accept order + auto-generate label) ─── */
+/* ── POST /orders/:id/accept  (accept order — synchronous, no label storage) ─────
+   Amazon Data Protection Policy: shipping labels contain buyer PII and MUST NOT
+   be cached or stored on the server.  We call Amazon MFN, save only the AWB +
+   shipmentId to the Order record, then discard the label buffer.  The browser
+   fetches a fresh copy on demand via GET /orders/:id/label.
+───────────────────────────────────────────────────────────────────────────────── */
 exports.acceptOrder = async (req, res, next) => {
   try {
     const order = await Order.findOne({ _id: req.params.id, userId: req.user._id });
@@ -166,86 +171,108 @@ exports.acceptOrder = async (req, res, next) => {
       return next(AppError.badRequest('Only pending orders can be accepted'));
     }
 
-    // Create label job record
-    const labelJob = await Label.create({
-      userId:     req.user._id,
-      orderIds:   [order._id],
-      splitType:  'order',
-      status:     'processing',
-      labelCount: 1,
-    });
+    const isSandbox = process.env.AMAZON_SANDBOX === 'true';
+    const amazonSvc = require('../services/amazon.service');
 
-    // Update order: status → label_generated, link label
-    order.status  = 'label_generated';
-    order.labelId = labelJob._id;
+    // Production: require a connected platform doc
+    let platformDoc = null;
+    if (!isSandbox) {
+      platformDoc = await Platform
+        .findOne({ userId: req.user._id, platformName: 'amazon', isConnected: true })
+        .select('+_accessToken +_refreshToken');
+      if (!platformDoc) {
+        return next(AppError.badRequest(
+          'Amazon account is not connected. Go to Settings → Platforms to connect.'
+        ));
+      }
+    }
+
+    // 1. Get eligible shipping services
+    const services  = await amazonSvc.getEligibleShippingServices(platformDoc, order.toObject());
+    const serviceId = services[0]?.ShippingServiceId;
+    if (!serviceId) {
+      return next(AppError.badRequest('No eligible shipping services available for this order'));
+    }
+
+    // 2. Create MFN shipment — Amazon returns AWB + label buffer.
+    //    We DISCARD the buffer immediately; only AWB + shipmentId are persisted.
+    const shipment = await amazonSvc.createMFNShipment(platformDoc, order.toObject(), serviceId);
+    if (!shipment.awb) {
+      return next(AppError.badRequest('Amazon did not return a shipment AWB'));
+    }
+
+    // 3. Persist only the identifiers — never the label PDF (Amazon DPP compliance)
+    order.status         = 'label_generated';
+    order.awb            = shipment.awb;
+    order.shipmentId     = shipment.shipmentId || null;
+    order.courierPartner = 'other';
+    order.platformStatus = 'Shipped';
     await order.save();
 
-    // Respond immediately — label generation is async
-    created(res, { orderId: order._id, labelId: labelJob._id }, 'Order accepted — label generating');
+    logger.info(`[acceptOrder] shipment created — order ${order.orderId}, AWB: ${shipment.awb}`);
+    success(res, {
+      orderId:    order._id,
+      awb:        shipment.awb,
+      shipmentId: shipment.shipmentId,
+    }, 'Order accepted — label ready to download');
+  } catch (err) { next(err); }
+};
 
-    // Background: call Amazon MFN API — Amazon provides the shipping label
-    setImmediate(async () => {
-      try {
-        const orderObj  = order.toObject();
-        const jobId     = labelJob._id.toString();
-        const filename  = `label_${orderObj.orderId || jobId}.pdf`;
+/* ── GET /orders/:id/label  (fetch fresh label — never stored on disk) ────────
+   Sandbox:    regenerate label PDF from order data on every request.
+   Production: fetch label from Amazon MFN API (GET /mfn/v0/shipments/:id/label).
+   Stream directly to the browser with Cache-Control: no-store.
+   Amazon Data Protection Policy requires we never cache or persist these labels.
+───────────────────────────────────────────────────────────────────────────────── */
+exports.downloadOrderLabel = async (req, res, next) => {
+  try {
+    const order = await Order.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!order) return next(AppError.notFound('Order not found'));
 
-        /* ── Amazon: use Merchant Fulfillment API — Amazon provides the label ── */
-        const amazonSvc   = require('../services/amazon.service');
-        const platformDoc = await Platform
-          .findOne({ userId: req.user._id, platformName: 'amazon' })
-          .select('+_accessToken +_refreshToken');
+    if (!['label_generated', 'shipped', 'delivered'].includes(order.status)) {
+      return next(AppError.badRequest('No label available for this order. Accept the order first.'));
+    }
 
-        if (!platformDoc || !platformDoc.isConnected) {
-          throw new Error('Amazon account is not connected. Connect your Amazon seller account first.');
-        }
+    const isSandbox = process.env.AMAZON_SANDBOX === 'true';
+    const amazonSvc = require('../services/amazon.service');
+    let pdfBuffer;
 
-        // 1. Get eligible shipping services from Amazon
-        const services  = await amazonSvc.getEligibleShippingServices(platformDoc, orderObj);
-        const serviceId = services[0]?.ShippingServiceId;
-        if (!serviceId) throw new Error('No eligible shipping services available for this order on Amazon');
-
-        // 2. Create MFN shipment — Amazon returns the AWB + label PDF
-        const shipment = await amazonSvc.createMFNShipment(platformDoc, orderObj, serviceId);
-        if (!shipment.labelBuffer) throw new Error('Amazon did not return a shipping label for this order');
-
-        const pdfBuffer = shipment.labelBuffer;
-        const awb       = shipment.awb;
-
-        // 3. Save AWB + shipmentId on the order
-        await Order.findByIdAndUpdate(order._id, {
-          awb,
-          shipmentId:     shipment.shipmentId || null,
-          courierPartner: 'other',
-          platformStatus: 'Shipped',
-        });
-
-        /* ── Save the label Amazon gave us to disk ─────────────────── */
-        const path = require('path');
-        const fsp  = require('fs/promises');
-        const outDir = path.join(process.cwd(), 'uploads', 'output', jobId);
-        await fsp.mkdir(outDir, { recursive: true });
-        await fsp.writeFile(path.join(outDir, filename), pdfBuffer);
-
-        await Label.findByIdAndUpdate(labelJob._id, {
-          status:      'ready',
-          pageCount:   1,
-          files: [{
-            name:      filename,
-            url:       `/uploads/output/${jobId}/${encodeURIComponent(filename)}`,
-            pageCount: 1,
-            orders:    [orderObj._id],
-            key:       filename,
-          }],
-          generatedAt: new Date(),
-        });
-
-        logger.info(`[accept] Amazon label ready — order ${orderObj.orderId}, AWB: ${awb}`);
-      } catch (err) {
-        logger.error(`[accept] label ${labelJob._id} failed:`, err.message);
-        await Label.findByIdAndUpdate(labelJob._id, { status: 'failed', error: err.message });
+    if (isSandbox) {
+      // Sandbox: generate fresh label from stored order data every time
+      pdfBuffer = await amazonSvc.generateSandboxLabelPDF(
+        order.toObject(),
+        order.awb || `AMZL${order._id}IN`
+      );
+    } else {
+      if (!order.shipmentId) {
+        return next(AppError.badRequest('No shipment ID on record for this order'));
       }
+      const platformDoc = await Platform
+        .findOne({ userId: req.user._id, platformName: 'amazon', isConnected: true })
+        .select('+_accessToken +_refreshToken');
+      if (!platformDoc) {
+        return next(AppError.badRequest('Amazon account is not connected'));
+      }
+      // Fetch fresh from Amazon — returns { buffer, format, dimensions }
+      const result = await amazonSvc.fetchShippingLabel(platformDoc, order.shipmentId);
+      pdfBuffer = result.buffer;
+    }
+
+    if (!pdfBuffer || !pdfBuffer.length) {
+      return next(AppError.badRequest('Could not retrieve label for this order'));
+    }
+
+    // Stream directly — never touch disk (Amazon DPP compliance)
+    const safeId = (order.orderId || order._id.toString()).replace(/[^a-zA-Z0-9_-]/g, '_');
+    res.set({
+      'Content-Type':        'application/pdf',
+      'Content-Disposition': `attachment; filename="label_${safeId}.pdf"`,
+      'Content-Length':      pdfBuffer.length,
+      'Cache-Control':       'no-store, no-cache, must-revalidate',
+      'Pragma':              'no-cache',
     });
+    res.send(pdfBuffer);
+    logger.info(`[downloadOrderLabel] streamed label — order ${order.orderId}, AWB: ${order.awb}`);
   } catch (err) { next(err); }
 };
 
