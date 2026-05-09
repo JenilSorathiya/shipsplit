@@ -209,8 +209,11 @@ export default function OrdersPage() {
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
 
   /* ── Bulk accept state ──────────────────────────────────── */
-  const [bulkAccepting,     setBulkAccepting]     = useState(false);
-  const [bulkAcceptProgress, setBulkAcceptProgress] = useState({ done: 0, total: 0 });
+  const [bulkAccepting,       setBulkAccepting]       = useState(false);
+  const [bulkAcceptProgress,  setBulkAcceptProgress]  = useState({ done: 0, total: 0 });
+
+  /* ── Bulk label download state ──────────────────────────── */
+  const [bulkDownloadingLabels, setBulkDownloadingLabels] = useState(false);
 
   /* ── Reject / cancel state ──────────────────────────────── */
   const [rejectTarget,  setRejectTarget]  = useState(null);  // order object being rejected
@@ -414,6 +417,42 @@ export default function OrdersPage() {
     }
   };
 
+  /* ── Bulk label download — merges all selected label-ready orders into one PDF ── */
+  const handleBulkDownloadLabels = async () => {
+    const labelReadyIds = orders
+      .filter((o) => selected.has(o._id) && ['label_generated', 'shipped', 'delivered'].includes(o.status))
+      .map((o) => o._id);
+
+    if (labelReadyIds.length === 0) {
+      toast.error('No label-ready orders selected — accept orders first');
+      return;
+    }
+
+    setBulkDownloadingLabels(true);
+    try {
+      const resp = await api.post('/orders/bulk-label', { orderIds: labelReadyIds }, { responseType: 'blob' });
+      const url  = URL.createObjectURL(resp.data);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `labels_bulk_${Date.now()}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${labelReadyIds.length} label${labelReadyIds.length !== 1 ? 's' : ''} as one PDF`);
+    } catch (err) {
+      let message = 'Bulk label download failed';
+      if (err.response?.data instanceof Blob) {
+        try { message = JSON.parse(await err.response.data.text()).message || message; } catch { /* not JSON */ }
+      } else if (err.response?.data?.message) {
+        message = err.response.data.message;
+      }
+      toast.error(message);
+    } finally {
+      setBulkDownloadingLabels(false);
+    }
+  };
+
   /* ── Client-side filter + paginate ─────────────────────── */
   const filtered = useMemo(() => {
     let data = orders;
@@ -576,9 +615,23 @@ export default function OrdersPage() {
               {bulkAccepting ? 'Accepting…' : 'Accept Selected'}
             </button>
 
+            {/* Download labels for all label-ready selected orders */}
+            <button
+              onClick={handleBulkDownloadLabels}
+              disabled={bulkAccepting || bulkDownloadingLabels}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success-600 hover:bg-success-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
+              title="Download labels for all selected label-ready orders as one PDF"
+            >
+              {bulkDownloadingLabels
+                ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
+              }
+              {bulkDownloadingLabels ? 'Downloading…' : 'Download Labels'}
+            </button>
+
             <button
               onClick={handleDeleteSelected}
-              disabled={bulkAccepting}
+              disabled={bulkAccepting || bulkDownloadingLabels}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold transition-colors disabled:opacity-60"
             >
               <TrashIcon className="h-3.5 w-3.5" />
@@ -587,7 +640,7 @@ export default function OrdersPage() {
 
             <button
               onClick={() => setSelected(new Set())}
-              disabled={bulkAccepting}
+              disabled={bulkAccepting || bulkDownloadingLabels}
               className="btn-ghost btn-sm text-gray-500 disabled:opacity-60"
             >
               <XMarkIcon className="h-3.5 w-3.5" />
