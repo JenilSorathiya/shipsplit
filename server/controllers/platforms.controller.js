@@ -49,8 +49,7 @@ exports.getOAuthUrl = async (req, res, next) => {
 /* ── GET /platforms/amazon/callback  (public — Amazon redirects here) ── */
 exports.handleAmazonCallback = async (req, res, next) => {
   try {
-    // Log all query params to debug
-    console.log('Amazon callback received:', JSON.stringify(req.query));
+    // NOTE: never log req.query here — it contains spapi_oauth_code and state (sensitive OAuth params)
     const { spapi_oauth_code, selling_partner_id, state, error, error_description } = req.query;
 
     if (error) {
@@ -68,7 +67,7 @@ exports.handleAmazonCallback = async (req, res, next) => {
       .select('+_accessToken +_refreshToken');
 
     if (!platform) {
-      logger.warn(`Amazon callback: state not found or expired — ${state}`);
+      logger.warn('Amazon callback: state not found or expired (possible CSRF or session timeout)');
       return res.redirect(`${CLIENT_URL()}/dashboard/settings?tab=platforms&error=invalid_state`);
     }
 

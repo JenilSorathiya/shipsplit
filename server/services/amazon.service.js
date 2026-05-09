@@ -652,7 +652,7 @@ exports.createMFNShipment = async (platform, order, shippingServiceId, settings 
     const awb         = `AMZL${Date.now()}IN`;
     const shipmentId  = `SANDBOX-${order.orderId}`;
     const labelBuffer = await exports.generateSandboxLabelPDF(order, awb);
-    logger.info(`[amazon sandbox] createMFNShipment → AWB ${awb}`);
+    logger.info('[amazon sandbox] createMFNShipment → shipment created');
     return { shipmentId, awb, labelBuffer, labelFormat: 'PDF' };
   }
 
@@ -796,9 +796,9 @@ exports.normalizeOrder = function normalizeOrder(raw, items = []) {
     isGift,
     giftMessage,
 
-    // Buyer
+    // Buyer — Amazon DPP: store only name + address (minimum needed for label/delivery)
+    // buyerEmail intentionally omitted — not required for fulfilment
     buyerName:  buyerInfo.BuyerName  || '',
-    buyerEmail: buyerInfo.BuyerEmail || '',
     address: {
       line1:   addr.AddressLine1  || '',
       line2:   addr.AddressLine2  || '',
@@ -820,7 +820,8 @@ exports.normalizeOrder = function normalizeOrder(raw, items = []) {
     // Timestamps
     platformCreatedAt: raw.PurchaseDate ? new Date(raw.PurchaseDate) : null,
 
-    rawData: raw,
+    // rawData intentionally omitted — storing raw SP-API responses violates
+    // Amazon's Data Protection Policy (full response contains unencrypted buyer PII)
   };
 };
 

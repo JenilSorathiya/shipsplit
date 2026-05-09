@@ -209,7 +209,9 @@ exports.acceptOrder = async (req, res, next) => {
     order.platformStatus = 'Shipped';
     await order.save();
 
-    logger.info(`[acceptOrder] shipment created — order ${order.orderId}, AWB: ${shipment.awb}`);
+    // Log masked AWB only — do not link full AWB to orderId in logs (Amazon DPP)
+    const maskedAwb = shipment.awb ? `***${shipment.awb.slice(-4)}` : 'N/A';
+    logger.info(`[acceptOrder] shipment created — AWB: ${maskedAwb}`);
     success(res, {
       orderId:    order._id,
       awb:        shipment.awb,
@@ -272,7 +274,7 @@ exports.downloadOrderLabel = async (req, res, next) => {
       'Pragma':              'no-cache',
     });
     res.send(pdfBuffer);
-    logger.info(`[downloadOrderLabel] streamed label — order ${order.orderId}, AWB: ${order.awb}`);
+    logger.info('[downloadOrderLabel] label streamed successfully');
   } catch (err) { next(err); }
 };
 
@@ -355,12 +357,12 @@ exports.rejectOrder = async (req, res, next) => {
           // Step 1: cancel the MFN shipment if one was created
           if (order.shipmentId) {
             await amazonSvc.cancelMFNShipment(platformDoc, order.shipmentId);
-            logger.info(`[reject] MFN shipment ${order.shipmentId} cancelled for order ${order.orderId}`);
+            logger.info('[reject] MFN shipment cancelled');
           }
 
           // Step 2: tell Amazon the order is cancelled
           await amazonSvc.cancelAmazonOrder(platformDoc, order.orderId, reason);
-          logger.info(`[reject] Amazon order ${order.orderId} cancelled, reason: ${reason}`);
+          logger.info(`[reject] Amazon order cancelled, reason: ${reason}`);
         }
       } catch (amazonErr) {
         // Log but don't block — cancel locally even if platform API fails

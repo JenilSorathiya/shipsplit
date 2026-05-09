@@ -69,6 +69,7 @@ function normalizeOrder(raw) {
     isCOD:             raw.paymentType === 'COD',
     codAmount:         raw.paymentType === 'COD' ? parseFloat(raw.orderAmount || 0) : 0,
     platformCreatedAt: raw.orderDate ? new Date(raw.orderDate) : null,
-    rawData:           raw,
+    // rawData intentionally omitted — raw platform responses contain buyer PII
+    // and must not be stored per platform Data Protection Policies
   };
 }

@@ -60,9 +60,10 @@ const orderSchema = new mongoose.Schema({
   },
 
   /* ── Buyer ────────────────────────────────────────── */
+  // Amazon DPP: only the minimum PII needed for fulfilment is stored.
+  // buyerEmail and buyerPhone are intentionally omitted — they are not
+  // required for shipping and Amazon DPP prohibits retaining them.
   buyerName:    { type: String, trim: true },
-  buyerPhone:   { type: String, trim: true },
-  buyerEmail:   { type: String, trim: true },
   address:      addressSchema,
 
   /* ── Package ──────────────────────────────────────── */
@@ -101,7 +102,8 @@ const orderSchema = new mongoose.Schema({
   /* ── Import metadata ──────────────────────────────── */
   importBatchId: String,
   syncedAt:      Date,
-  rawData:       { type: mongoose.Schema.Types.Mixed, select: false },
+  // rawData intentionally removed — storing the full SP-API response object
+  // violates Amazon's Data Protection Policy (contains unencrypted buyer PII).
 }, {
   timestamps: true,
 });

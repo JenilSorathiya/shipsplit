@@ -11,12 +11,15 @@ A SaaS shipping label management platform built for Indian ecommerce sellers on 
 3. [Local Development Setup](#3-local-development-setup)
 4. [Environment Variables](#4-environment-variables)
 5. [API Documentation](#5-api-documentation)
-6. [Subscription Plans](#6-subscription-plans)
-7. [Amazon SP-API Setup Guide](#7-amazon-sp-api-setup-guide)
-8. [Deployment Guide](#8-deployment-guide)
-9. [PDF Splitting Engine](#9-pdf-splitting-engine)
-10. [Contributing](#10-contributing)
-11. [License](#11-license)
+6. [Order Lifecycle](#6-order-lifecycle)
+7. [Amazon MFN Label Flow](#7-amazon-mfn-label-flow)
+8. [Subscription Plans](#8-subscription-plans)
+9. [Amazon SP-API Setup Guide](#9-amazon-sp-api-setup-guide)
+10. [Deployment Guide](#10-deployment-guide)
+11. [PDF Splitting Engine](#11-pdf-splitting-engine)
+12. [What Was Built — Session Log](#12-what-was-built--session-log)
+13. [Contributing](#13-contributing)
+14. [License](#14-license)
 
 ---
 
@@ -28,8 +31,9 @@ ShipSplit solves a daily pain point for Indian ecommerce sellers: managing and p
 
 **Core capabilities:**
 
+- **One-click order acceptance** — Click "Accept Order" on any pending order. ShipSplit automatically calls the Amazon MFN API (or compiles a label from order data), generates a PDF label, and makes it available for download — no wizard, no manual steps.
 - **Shipping label splitting** — Upload a bulk PDF of shipping labels; ShipSplit splits each page into individual label files and organizes them by courier, SKU, product name, or order ID. Output is available as individual PDFs or a single ZIP archive.
-- **Multi-platform order sync** — Connect your Amazon Seller Central account via SP-API. Pull orders automatically, match them to label pages by position, and keep everything in sync.
+- **Multi-platform order sync** — Connect your Amazon Seller Central account via SP-API. Pull orders automatically every hour or on demand.
 - **Razorpay subscription billing** — Three-tier subscription plans (Free Trial, Standard, Pro) with Razorpay payment processing, webhook-based verification, and invoice history.
 - **PDF overlays and transformations** — Stamp AWB numbers, SKU codes, and product names directly onto label pages. Resize pages to A4, A5, A6, or 4×6 inch formats. Remove blank pages automatically.
 - **Analytics and reports** — Dashboard with order volume, courier breakdown, SKU performance, and CSV export.
@@ -58,6 +62,9 @@ shipsplit/
 │   ├── public/
 │   ├── src/
 │   │   ├── pages/           # Route-level page components
+│   │   │   ├── OrdersPage.jsx          # Accept orders + download labels
+│   │   │   ├── LabelGeneratorPage.jsx  # Label Splitter (upload flow)
+│   │   │   └── DashboardPage.jsx
 │   │   ├── components/      # Reusable UI components
 │   │   ├── hooks/           # React Query data-fetching hooks
 │   │   ├── context/         # AuthContext (user session state)
@@ -67,26 +74,30 @@ shipsplit/
 │   └── package.json
 │
 ├── server/                  # Express backend
-│   ├── controllers/         # Route handler logic
-│   ├── routes/              # Express router definitions
-│   ├── models/              # Mongoose schemas (User, Order, Label, etc.)
-│   ├── services/            # Business logic
-│   │   ├── amazon.service.js
-│   │   ├── pdfService.js
-│   │   └── ...
-│   ├── middleware/          # Auth, error handling, rate limiting
-│   ├── utils/               # Helpers and shared utilities
-│   ├── validations/         # Request validation schemas
-│   ├── server.js            # App entry point
+│   ├── controllers/
+│   │   ├── orders.controller.js   # acceptOrder, syncOrders, uploadOrders, etc.
+│   │   └── labels.controller.js   # uploadPdf, generate, download (w/ disk fallback)
+│   ├── routes/
+│   ├── models/
+│   │   ├── Order.model.js         # labelId ref, status enum
+│   │   └── Label.model.js         # splitType enum, files[], status
+│   ├── services/
+│   │   ├── amazon.service.js      # SP-API + MFN + sandbox label PDF
+│   │   ├── pdfService.js          # compileLabelsIntoPdf, processLabels
+│   │   └── syncJob.js             # Cron-based background sync
+│   ├── middleware/
+│   ├── utils/
+│   ├── validations/
+│   ├── server.js
 │   └── package.json
 │
-├── shared/                  # Constants shared between client and server
+├── shared/
 │   └── constants.js
 │
-├── .env                     # Environment variables (never commit this)
-├── .env.example             # Template for environment variables
-├── docker-compose.yml       # Docker orchestration
-└── package.json             # Root package (optional workspace config)
+├── .env
+├── .env.example
+├── docker-compose.yml
+└── package.json
 ```
 
 ---
@@ -120,7 +131,7 @@ cp .env.example .env
 # See Section 4 for a full reference of every variable
 
 # 5. Start MongoDB
-# Option A — Local MongoDB (must be running before starting the server)
+# Option A — Local MongoDB
 mongod --dbpath /data/db
 
 # Option B — MongoDB Atlas
@@ -133,11 +144,11 @@ npx nodemon server.js   # development mode (auto-restarts on file changes)
 
 # 7. Start the frontend (open a second terminal)
 cd client
-npm run dev             # starts on http://localhost:3000
+npm run dev             # starts on http://localhost:5173
 ```
 
 Once both processes are running:
-- Frontend: `http://localhost:3000`
+- Frontend: `http://localhost:5173`
 - Backend API: `http://localhost:5000/api`
 
 ---
@@ -152,11 +163,11 @@ Create a `.env` file in the project root by copying `.env.example`. All variable
 | `PORT` | Port the Express server listens on | `5000` |
 | `MONGODB_URI` | MongoDB connection string | `mongodb+srv://user:pass@cluster.mongodb.net/shipsplit` |
 | `JWT_SECRET` | Secret key for signing access tokens (minimum 32 characters) | `a-random-32-character-string-here` |
-| `JWT_REFRESH_SECRET` | Secret key for signing refresh tokens (minimum 32 characters) | `another-random-32-character-string` |
+| `JWT_REFRESH_SECRET` | Secret key for signing refresh tokens (falls back to `JWT_SECRET` if unset) | `another-random-32-character-string` |
 | `JWT_EXPIRES_IN` | Access token expiry duration | `15m` |
 | `JWT_REFRESH_EXPIRES_IN` | Refresh token expiry duration | `30d` |
-| `CLIENT_URL` | Frontend URL used for CORS allow-list | `http://localhost:3000` |
-| `ENCRYPT_KEY` | AES-256 encryption key for storing platform tokens (hex, 64 characters) | Generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `CLIENT_URL` | Frontend URL used for CORS allow-list | `http://localhost:5173` |
+| `ENCRYPT_KEY` | AES-256 encryption key for storing platform tokens (hex, 64 chars) | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `RAZORPAY_KEY_ID` | Razorpay API key ID | `rzp_test_xxxxxxxxxxxxxxxx` |
 | `RAZORPAY_KEY_SECRET` | Razorpay API key secret | `your-razorpay-secret` |
 | `RAZORPAY_WEBHOOK_SECRET` | Secret for verifying Razorpay webhook signatures | `your-webhook-secret` |
@@ -204,14 +215,41 @@ All endpoints are prefixed with `/api`. Authentication is via Bearer token in th
 
 | Method | Endpoint | Auth Required | Description |
 |---|---|---|---|
-| `GET` | `/` | Yes | List orders with optional filters (platform, status, date range, search) |
+| `GET` | `/` | Yes | List orders with filters: `platform`, `status`, `courierPartner`, `search`, `dateFrom`, `dateTo`, `sortBy`, `sortOrder`, `page`, `limit` |
 | `GET` | `/:id` | Yes | Fetch a single order by ID |
-| `PATCH` | `/:id` | Yes | Update order fields (status, courier, notes) |
+| `PATCH` | `/:id` | Yes | Update order fields: `status`, `courierPartner`, `awb`, `trackingUrl` |
 | `DELETE` | `/:id` | Yes | Delete an order |
-| `POST` | `/upload` | Yes | Import orders from a CSV file |
+| `POST` | `/upload` | Yes | Import orders from a CSV file (platform specified in body) |
+| `POST` | `/:id/accept` | Yes | **Accept a pending order — auto-generates label in background** |
 | `POST` | `/:id/assign-courier` | Yes | Assign a courier to a single order |
-| `POST` | `/bulk-assign-courier` | Yes | Assign a courier to multiple orders in one request |
-| `POST` | `/sync` | Yes | Trigger a manual sync of orders from connected platforms |
+| `POST` | `/bulk-assign-courier` | Yes | Assign a courier to multiple orders |
+| `POST` | `/sync` | Yes | Trigger a manual sync of orders from a connected platform |
+
+#### `POST /orders/:id/accept` — Accept Order
+
+Transitions a `pending` order to `label_generated` and starts background label generation.
+
+**Request:** No body required.
+
+**Response `201`:**
+```json
+{
+  "success": true,
+  "message": "Order accepted — label generating",
+  "data": {
+    "orderId": "68abc123...",
+    "labelId": "68def456..."
+  }
+}
+```
+
+After the response is sent, the server:
+1. For Amazon orders: calls MFN API → `getEligibleShippingServices` → `createMFNShipment` → receives real label PDF + AWB
+2. Fallback for non-Amazon or API failure: compiles a label PDF from order data using pdf-lib
+3. Saves PDF to `uploads/output/:labelId/label_<orderId>.pdf`
+4. Updates the Label record to `status: 'ready'` with the file URL
+
+Poll `GET /labels/:labelId/status` every few seconds until `status === 'ready'`, then download via `GET /labels/:labelId/download/:filename`.
 
 ---
 
@@ -221,9 +259,9 @@ All endpoints are prefixed with `/api`. Authentication is via Bearer token in th
 |---|---|---|---|
 | `GET` | `/` | Yes | List all label jobs for the authenticated user |
 | `GET` | `/:id` | Yes | Fetch metadata for a specific label job |
-| `GET` | `/:id/status` | Yes | Poll the processing status of a label job |
-| `GET` | `/:id/download/:filename` | Yes | Download a generated label file (PDF or ZIP) |
-| `POST` | `/upload-pdf` | Yes | Upload a bulk label PDF to start a new job |
+| `GET` | `/:id/status` | Yes | Poll the processing status (`pending` / `processing` / `ready` / `failed`) |
+| `GET` | `/:id/download/:filename` | Yes | Download a generated label PDF (recompiles from DB if file was lost on disk) |
+| `POST` | `/upload-pdf` | Yes | Upload a bulk label PDF to start a new split job |
 | `POST` | `/generate` | Yes | Generate individual label PDFs from an existing job |
 | `POST` | `/merge` | Yes | Merge selected label PDFs into a single combined PDF |
 | `DELETE` | `/:id` | Yes | Delete a label job and its associated files |
@@ -237,10 +275,10 @@ All endpoints are prefixed with `/api`. Authentication is via Bearer token in th
 | `GET` | `/amazon/oauth-url` | Yes | Generate the Amazon SP-API OAuth authorization URL |
 | `GET` | `/amazon/callback` | No | Handle the Amazon OAuth redirect and store credentials |
 | `GET` | `/` | Yes | List all connected platform integrations |
-| `GET` | `/:name` | Yes | Fetch details for a specific platform (e.g., `amazon`) |
+| `GET` | `/:name` | Yes | Fetch details for a specific platform (e.g. `amazon`) |
 | `DELETE` | `/:name` | Yes | Disconnect and remove a platform integration |
 | `POST` | `/:name/sync` | Yes | Trigger an immediate order sync for a platform |
-| `PUT` | `/:name/settings` | Yes | Update sync settings for a platform (frequency, filters) |
+| `PUT` | `/:name/settings` | Yes | Update sync settings (frequency, filters) |
 
 ---
 
@@ -260,16 +298,93 @@ All endpoints are prefixed with `/api`. Authentication is via Bearer token in th
 
 | Method | Endpoint | Auth Required | Description |
 |---|---|---|---|
-| `GET` | `/dashboard` | Yes | Summary metrics for the dashboard (order count, label count, top couriers) |
+| `GET` | `/dashboard` | Yes | Summary metrics: order counts, label counts, top couriers, platform breakdown |
 | `GET` | `/summary` | Yes | Aggregate totals filtered by date range |
 | `GET` | `/orders-by-day` | Yes | Daily order volume time series |
 | `GET` | `/courier-breakdown` | Yes | Order distribution across couriers |
 | `GET` | `/sku-breakdown` | Yes | Order and label counts broken down by SKU |
-| `GET` | `/export.csv` | Yes | Download a CSV export of order and label data for the selected period |
+| `GET` | `/export.csv` | Yes | Download a CSV export of order and label data |
 
 ---
 
-## 6. Subscription Plans
+## 6. Order Lifecycle
+
+```
+CSV Upload / API Sync
+        │
+        ▼
+    [ pending ]
+        │
+        │  POST /orders/:id/accept
+        ▼
+[ label_generated ]  ◄── Label Job: status = processing
+        │
+        │  (background: MFN API or compiled PDF)
+        ▼
+        │                   Label Job: status = ready
+        │  User downloads label
+        ▼
+   [ shipped ]   ◄── AWB + courierPartner assigned
+        │
+        ▼
+  [ delivered ]
+```
+
+### Status Values
+
+| Status | Meaning |
+|---|---|
+| `pending` | Order imported, awaiting acceptance |
+| `label_generated` | Accepted; label PDF generating or ready |
+| `shipped` | AWB assigned, dispatched to courier |
+| `delivered` | Confirmed delivered |
+| `cancelled` | Order cancelled |
+| `returned` | Return initiated |
+
+---
+
+## 7. Amazon MFN Label Flow
+
+When a seller accepts an Amazon order, ShipSplit uses the **Merchant Fulfillment Network (MFN) API** to create a real shipment on Amazon and receive an official label PDF.
+
+### Production Flow
+
+```
+POST /orders/:id/accept
+  │
+  ├─ getEligibleShippingServices(platformDoc, order)
+  │    → POST /mfn/v0/eligibleShippingServices
+  │    → returns list of available couriers + service IDs
+  │
+  ├─ createMFNShipment(platformDoc, order, shippingServiceId)
+  │    → POST /mfn/v0/shipments
+  │    → returns { shipmentId, AWB, label: { FileContents: "<base64 PDF>" } }
+  │
+  └─ Decode base64 → pdfBuffer
+       Save to disk → uploads/output/:labelId/label_<orderId>.pdf
+       Update Order: awb, courierPartner = 'other', platformStatus = 'Shipped'
+       Update Label: status = 'ready', files = [{ url, name }]
+```
+
+### Sandbox Behaviour
+
+In sandbox mode, the MFN API requires specific static test order IDs to return label data. For all other cases, ShipSplit falls back to generating a realistic Amazon-style label using `pdf-lib`:
+
+- **Format:** A5 landscape (302 × 453 pt)
+- **Header:** Orange background with "amazon" logo + "Easy Ship" text
+- **Order ID row:** Grey background showing the order ID
+- **Ship To section:** Buyer name, full address
+- **Product section:** Product name + SKU
+- **AWB section:** Randomly generated `AMZL{timestamp}IN` number with a barcode simulation strip
+- **Footer:** ShipSplit branding
+
+### Fallback (Non-Amazon / API Error)
+
+If the MFN API call fails or the platform is not Amazon, `pdfService.compileLabelsIntoPdf()` generates a label directly from the order data stored in MongoDB.
+
+---
+
+## 8. Subscription Plans
 
 | Feature | Free Trial | Standard | Pro |
 |---|---|---|---|
@@ -281,11 +396,11 @@ All endpoints are prefixed with `/api`. Authentication is via Bearer token in th
 | **API access** | No | No | Yes |
 | **Custom branding on labels** | No | No | Yes |
 
-Annual billing provides a discount equivalent to two months free compared to monthly billing. Subscriptions are managed through Razorpay; cancellations take effect at the end of the current billing period.
+Annual billing provides a discount equivalent to two months free compared to monthly billing.
 
 ---
 
-## 7. Amazon SP-API Setup Guide
+## 9. Amazon SP-API Setup Guide
 
 Follow these steps to connect ShipSplit to Amazon Seller Central via the Selling Partner API.
 
@@ -300,19 +415,19 @@ In the Developer Console, create a new application. Select "Private Seller App" 
 **Step 3 — Record your application credentials**
 
 After creating the application, note down:
-- **App ID** — goes into `AMAZON_APP_ID`
-- **LWA Client ID** — goes into `AMAZON_CLIENT_ID`
-- **LWA Client Secret** — goes into `AMAZON_CLIENT_SECRET`
+- **App ID** → `AMAZON_APP_ID`
+- **LWA Client ID** → `AMAZON_CLIENT_ID`
+- **LWA Client Secret** → `AMAZON_CLIENT_SECRET`
 
 **Step 4 — Create an IAM user**
 
-In the [AWS IAM Console](https://console.aws.amazon.com/iam/), create a new IAM user. Attach the `AmazonSellingPartnerAPIRole` managed policy to the user. This grants the permissions required to sign SP-API requests.
+In the [AWS IAM Console](https://console.aws.amazon.com/iam/), create a new IAM user. Attach the `AmazonSellingPartnerAPIRole` managed policy. This grants permissions required to sign SP-API requests.
 
 **Step 5 — Generate IAM access keys**
 
-Under the IAM user's Security Credentials tab, create an access key. Save:
-- **Access Key ID** — goes into `AMAZON_AWS_ACCESS_KEY_ID`
-- **Secret Access Key** — goes into `AMAZON_AWS_SECRET_ACCESS_KEY`
+Under the IAM user's Security Credentials tab, create an access key:
+- **Access Key ID** → `AMAZON_AWS_ACCESS_KEY_ID`
+- **Secret Access Key** → `AMAZON_AWS_SECRET_ACCESS_KEY`
 
 **Step 6 — Configure the OAuth callback URL**
 
@@ -322,7 +437,7 @@ In your SP-API application settings, set the OAuth redirect URI to:
 https://yourdomain.com/api/platforms/amazon/callback
 ```
 
-For local development use:
+For local development:
 
 ```
 http://localhost:5000/api/platforms/amazon/callback
@@ -330,203 +445,300 @@ http://localhost:5000/api/platforms/amazon/callback
 
 **Step 7 — Add all credentials to `.env`**
 
-Populate `AMAZON_APP_ID`, `AMAZON_CLIENT_ID`, `AMAZON_CLIENT_SECRET`, `AMAZON_AWS_ACCESS_KEY_ID`, and `AMAZON_AWS_SECRET_ACCESS_KEY` in your `.env` file.
+Populate all `AMAZON_*` variables in your `.env` file.
 
 **Step 8 — Marketplace ID**
 
-The Amazon marketplace ID for India (Amazon.in) is:
-
-```
-A21TJRUUN4KGV
-```
-
-Set this as `AMAZON_MARKETPLACE_ID` in `.env`.
-
-Once configured, users can connect their Seller Central account from the Platforms page in the ShipSplit dashboard. ShipSplit will request the OAuth authorization URL from `/api/platforms/amazon/oauth-url` and complete the token exchange via the callback.
+The Amazon marketplace ID for India (Amazon.in) is `A21TJRUUN4KGV`. Set this as `AMAZON_MARKETPLACE_ID`.
 
 ---
 
-## 8. Deployment Guide
+## 10. Deployment Guide
 
 ### Option A: Docker (Recommended)
 
-The repository includes a `docker-compose.yml` that orchestrates the backend, frontend build, and a MongoDB container.
-
 ```bash
-# Build images and start all services in the background
 docker-compose up -d
-
-# Tail logs for the backend service
 docker-compose logs -f backend
-
-# Stop all services
 docker-compose down
 ```
 
-Make sure to supply environment variables either through a `.env` file at the project root (Docker Compose reads it automatically) or via the `environment:` section in `docker-compose.yml`.
-
----
-
 ### Option B: PM2 on a VPS
 
-Suitable for a single Linux VPS (Ubuntu, Debian, etc.) running Node.js directly.
-
 ```bash
-# Install PM2 globally
 npm install -g pm2
-
-# Build the frontend for production
-cd client
-npm run build
-# Serve the dist/ directory via Nginx or another static file server
-
-# Start the backend with PM2
-cd ../server
-pm2 start ecosystem.config.js
-
-# Persist the PM2 process list across server reboots
-pm2 save
-pm2 startup
-# Run the command that pm2 startup prints to register the init script
+cd client && npm run build
+cd ../server && pm2 start ecosystem.config.js
+pm2 save && pm2 startup
 ```
 
-An `ecosystem.config.js` example:
+`ecosystem.config.js` example:
 
 ```js
 module.exports = {
-  apps: [
-    {
-      name: 'shipsplit-api',
-      script: 'server.js',
-      cwd: '/var/www/shipsplit/server',
-      instances: 'max',
-      exec_mode: 'cluster',
-      env: {
-        NODE_ENV: 'production',
-        PORT: 5000,
-      },
-    },
-  ],
+  apps: [{
+    name: 'shipsplit-api',
+    script: 'server.js',
+    cwd: '/var/www/shipsplit/server',
+    instances: 'max',
+    exec_mode: 'cluster',
+    env: { NODE_ENV: 'production', PORT: 5000 },
+  }],
 };
 ```
 
----
-
-### Option C: Vercel (Frontend) + Railway or Render (Backend)
-
-A fully managed, zero-infrastructure option.
+### Option C: Vercel (Frontend) + Render (Backend)
 
 **Frontend — Vercel**
 
-1. Push the repository to GitHub.
-2. Import the project in [Vercel](https://vercel.com) and set the root directory to `client/`.
-3. Vercel detects Vite automatically. Add a `vercel.json` in `client/` if you need to configure rewrites for client-side routing:
-
+1. Import the repo into Vercel. Set root directory to `client/`.
+2. Add `vercel.json` for SPA routing:
 ```json
-{
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
-}
+{ "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }] }
 ```
+3. Set `VITE_API_URL` to your Render backend URL.
 
-4. Set `VITE_API_URL` to your backend URL in Vercel's Environment Variables settings.
+**Backend — Render**
 
-**Backend — Railway or Render**
+1. Create a new Web Service on Render, connect your GitHub repo.
+2. Set root directory: `server/`, start command: `node server.js`.
+3. Add all environment variables from Section 4 in the Render dashboard.
 
-1. Create a new service in [Railway](https://railway.app) or [Render](https://render.com) and connect the same GitHub repository.
-2. Set the root directory to `server/`.
-3. Set the start command to `node server.js`.
-4. Add all server-side environment variables from Section 4 in the platform's dashboard.
-5. Update `CLIENT_URL` in the backend environment to match your Vercel deployment URL.
+> **Important — Ephemeral Filesystem:** Render's free tier wipes `uploads/output/` on every redeploy. ShipSplit handles this automatically: if a label PDF is not found on disk, `downloadFile` recompiles the PDF on-the-fly from the order data stored in MongoDB. Label downloads always work, even after a redeploy.
 
 ---
 
-## 9. PDF Splitting Engine
+## 11. PDF Splitting Engine
 
 ShipSplit's PDF engine is built on [pdf-lib](https://pdf-lib.js.org/) and handles the full lifecycle of a label processing job.
 
 ### Ingestion
 
-A bulk label PDF is uploaded via `POST /api/labels/upload-pdf`. The file is stored temporarily on the server and a new label job record is created in MongoDB with status `pending`.
+A bulk label PDF is uploaded via `POST /api/labels/upload-pdf`. The file is stored temporarily and a new label job is created in MongoDB with `status: 'pending'`.
 
 ### Page-to-Order Mapping
 
-Each page in the uploaded PDF corresponds to exactly one order, mapped positionally (page 1 = order 1, page 2 = order 2, etc.). The frontend order list must be sorted to match the page sequence before generating labels.
+Each page in the uploaded PDF corresponds to exactly one order, mapped positionally (page 1 = order 1, etc.).
 
 ### Split Types
 
-When a split job is triggered via `POST /api/labels/generate`, the user selects a split type that determines how output files are grouped:
-
 | Split Type | Behaviour |
 |---|---|
-| `courier` | One folder/archive per courier (Blue Dart, Delhivery, Xpressbees, etc.) |
+| `courier` | One folder/archive per courier partner |
 | `sku` | One folder/archive per SKU code |
 | `product` | One folder/archive per product name |
-| `orderid` | Each label saved as an individual file named by order ID |
-| `gift` | Separates gift-wrapped orders into their own group |
-| `none` | All labels kept in a single flat archive |
+| `order` | One file per order (individual labels) |
 
 ### Output
 
-- Individual PDFs for each label page, named by order ID or sequence number.
-- A single ZIP archive containing all generated files, available for bulk download via `GET /api/labels/:id/download/:filename`.
+- Individual PDFs named by order ID.
+- A ZIP archive for bulk download via `GET /api/labels/:id/download/:filename`.
 
 ### PDF Transformations
 
-The following transformations can be applied during generation:
-
-- **AWB overlay** — Stamps the Airway Bill number onto the label.
-- **SKU overlay** — Adds the SKU code as text on the label.
-- **Product name overlay** — Adds the product name as a text overlay.
-- **Watermark** — Applies a custom watermark (e.g., store name or logo) across the label.
-- **Blank page removal** — Detects and skips pages that are entirely blank.
-- **Page resize** — Resamples and crops pages to A4, A5, A6, or 4×6 inch dimensions.
+- AWB number overlay
+- SKU overlay
+- Product name overlay
+- Blank page removal
+- Page resize (A4, A5, A6, 4×6 inch)
 
 ### Limits
 
-- Maximum **500 label pages per job** to keep processing times within acceptable bounds.
-- Files are cleaned up from temporary storage after the job is downloaded or after a configurable TTL.
+- Maximum **500 label pages per job**.
+- Temporary files are cleaned up after download or after a configurable TTL.
 
 ---
 
-## 10. Contributing
+## 12. What Was Built — Session Log
 
-Contributions are welcome. Please follow the steps below.
+This section documents the features and fixes implemented during development sessions, in chronological order.
 
-### Getting Started
+---
+
+### Session 1 — Core Infrastructure
+
+- Express server with JWT auth (access + refresh tokens), Google OAuth via Passport
+- MongoDB models: User, Order, Label, Platform, Subscription, Returns, Remittances
+- All base API routes wired up (auth, orders, labels, platforms, reports, subscription, returns, remittances)
+- Razorpay subscription billing: create order → verify payment → webhook activation
+- Rate limiting middleware, Helmet security headers, mongo-sanitize
+- React frontend scaffold with Vite, Tailwind CSS, React Router v6
+- Axios instance (`client/src/utils/api.js`) with JWT interceptors (auto-attach token, auto-refresh on 401)
+
+---
+
+### Session 2 — Orders Page & Dashboard Wired to Real API
+
+**Problem:** The Orders page and Dashboard were showing hardcoded mock data instead of real API responses.
+
+**Fixed:**
+
+- `OrdersPage.jsx` — rewired all data fetching to `GET /api/orders` with filters (platform, status, search, date range, pagination). Pagination meta from `response.meta` now drives the page controls.
+- `DashboardPage.jsx` — rewired to `GET /api/reports/dashboard` for real order counts, label counts, platform breakdown, courier stats.
+- **Axios interceptor fix** (`client/src/utils/api.js`): the API returns `{ success, data, meta }` envelope. The interceptor was returning `response.data.data` (unwrapped), which dropped `meta`. Fixed by also storing `response.meta = body.meta` before returning, so components can read `response.meta.total` for pagination.
+
+**Commit:** `a1c3d92` — "fix: wire Orders page and Dashboard to real API, fix axios meta unwrap"
+
+---
+
+### Session 3 — Amazon-Style Accept Order Flow
+
+**Problem:** The app had a 5-step manual label generation wizard. Real shipping platforms (Amazon Seller Central) don't work this way — you accept an order and the label appears.
+
+**What was built:**
+
+#### Backend
+
+**New route:** `POST /api/orders/:id/accept` (`server/routes/orders.routes.js`)
+
+**New controller:** `acceptOrder` (`server/controllers/orders.controller.js`)
+
+Flow:
+1. Validates order exists and `status === 'pending'`
+2. Creates a `Label` record with `status: 'processing'`, `splitType: 'order'`
+3. Updates `order.status = 'label_generated'`, `order.labelId = labelJob._id`
+4. Responds immediately with `{ orderId, labelId }` — frontend doesn't wait
+5. Background (`setImmediate`):
+   - **Amazon orders:** calls `getEligibleShippingServices` → `createMFNShipment` → gets real label PDF + AWB from Amazon
+   - **Fallback:** `pdfSvc.compileLabelsIntoPdf()` generates label from order data
+   - Saves PDF to `uploads/output/:labelId/label_<orderId>.pdf`
+   - Updates Label to `status: 'ready'` with file info
+
+**Bug fixed during development:** `Label.create({ splitType: 'none' })` crashed Mongoose validation because `'none'` is not in the enum `['courier', 'sku', 'product', 'order']`. Fixed by using `splitType: 'order'`.
+
+**Commit:** `be8cde8` — "fix: use splitType 'order' (valid enum) in acceptOrder, not 'none'"
+
+#### Frontend
+
+**`OrdersPage.jsx`** — complete rewrite:
+
+- Per-row contextual action buttons that change based on order state:
+  - `pending` + no label → **"Accept Order"** (blue button)
+  - Accepting in flight → spinner
+  - Label processing → **"Generating…"** spinner
+  - Label ready → **"Download Label"** (green button)
+  - Label failed → **"Retry"** link
+  - Other statuses → 3-dot row menu
+- `labelStates` map (`{ [orderId]: { labelId, status, filename } }`) tracks per-order label state
+- Pre-populates `labelStates` from `order.labelId` when orders load (already-accepted orders show Download immediately)
+- Polling: `setInterval` every 3 seconds polls `GET /labels/:labelId/status` for any orders with `status: 'processing'`; fires a toast and updates button to "Download Label" when ready
+- `handleDownloadLabel`: fetches status to get filename if needed, then downloads blob via `axios({ responseType: 'blob' })`
+- How-it-works info banner at top of page
+
+---
+
+### Session 4 — Amazon MFN (Merchant Fulfillment Network) Label
+
+**Problem:** The `acceptOrder` fallback was always using the compiled label. For Amazon orders, we should use Amazon's real label from the MFN API.
+
+**What was built** (`server/services/amazon.service.js`):
+
+**`getEligibleShippingServices(platform, order)`**
+- Production: calls `POST /mfn/v0/eligibleShippingServices` (SP-API, AWS Sig v4 signed)
+- Sandbox: returns static `{ ShippingServiceId: 'AMAZON_SHIPPING_SAMEDAY', ShippingServiceName: 'Amazon Easy Ship' }`
+
+**`createMFNShipment(platform, order, shippingServiceId)`**
+- Production: calls `POST /mfn/v0/shipments`, decodes `response.Label.FileContents` (base64 PDF) → `labelBuffer`
+- Sandbox: calls `generateSandboxLabelPDF(order, awb)` to produce a realistic Amazon Easy Ship label
+
+**`generateSandboxLabelPDF(order, awb)`** — internal function using pdf-lib:
+- A5 size (302 × 453 pt)
+- Orange header: "amazon" + "Easy Ship"
+- Grey row: order ID
+- "SHIP TO" section: buyer name + address
+- Product + SKU section
+- AWB number: `AMZL{timestamp}IN` + barcode strip simulation
+- Footer: "ShipSplit • Powered by Amazon Easy Ship"
+
+---
+
+### Session 5 — Label Generator Simplification
+
+**Problem:** `LabelGeneratorPage.jsx` (1109 lines) contained a 5-step wizard (step bar, split type selector, label size config, courier assignment, download). This workflow no longer made sense — orders now get labels automatically on accept.
+
+**What was changed:**
+
+- Removed: SPLIT_TYPES, COURIERS, LABEL_SIZES, PLATFORM_STYLE constants, STEPS array, StepBar component, Step1–Step5 components, the main multi-step wizard
+- Kept: `UploadSplitSection` component (full upload flow for bulk PDF splitting — platform tabs, drag-and-drop, progress bar, results, download buttons)
+- New page layout: 3-step how-it-works strip + UploadSplitSection + tip box pointing users to the Orders page for per-order labels
+- Page title changed from "Label Generator" to **"Label Splitter"**
+- File reduced from ~1109 lines to ~330 lines
+
+---
+
+### Session 6 — Ephemeral Disk Download Fallback
+
+**Problem:** Render's free tier wipes the `uploads/output/` directory on every redeploy. After a redeploy, clicking "Download Label" returned 404 because the PDF file was gone from disk.
+
+**Fix** (`server/controllers/labels.controller.js`, `downloadFile`):
+
+```js
+// Check if file exists on disk
+let fileExistsOnDisk = false;
+try { await fsp.access(filePath); fileExistsOnDisk = true; } catch { }
+
+if (!fileExistsOnDisk) {
+  // Recompile from order data in MongoDB
+  const populated = await Label.findOne({ _id: id, userId: req.user._id })
+    .populate('orderIds').lean();
+  const pdfBuffer = await pdfSvc.compileLabelsIntoPdf(populated.orderIds, {
+    pageSize: populated.settings?.pageSize || 'A4',
+    labelsPerPage: populated.settings?.labelsPerPage || 1,
+    settings: populated.settings || {},
+  });
+  res.set({ 'Content-Type': 'application/pdf', ... });
+  return res.send(pdfBuffer);
+}
+```
+
+Label downloads now work permanently regardless of server restarts or redeploys.
+
+**Commit:** `51cd96d` — "fix: recompile label PDF on-the-fly if file missing after redeploy"
+
+---
+
+### Git Commit Log (this project)
+
+| Commit | Message |
+|---|---|
+| `51cd96d` | fix: recompile label PDF on-the-fly if file missing after redeploy |
+| `be8cde8` | fix: use splitType 'order' (valid enum) in acceptOrder, not 'none' |
+| `2ce062e` | feat: Accept Order flow — auto-generate label, Orders page per-row actions |
+| `a1c3d92` | fix: wire Orders page and Dashboard to real API, fix axios meta unwrap |
+| *(earlier)* | feat: Amazon MFN label flow + sandbox PDF generation |
+| *(earlier)* | feat: Label Generator simplified to Label Splitter |
+
+---
+
+## 13. Contributing
+
+Contributions are welcome.
 
 ```bash
 # Fork the repository on GitHub, then clone your fork
 git clone https://github.com/your-fork/shipsplit.git
 cd shipsplit
-```
 
-### Workflow
-
-```bash
 # Create a feature branch from main
 git checkout -b feature/your-feature-name
 
-# Make your changes, then run the test suite
-node server/test.js
-
-# Commit with a clear message
+# Make your changes
 git commit -m "feat: describe your change here"
 
-# Push your branch and open a pull request
+# Push and open a pull request
 git push origin feature/your-feature-name
 ```
 
 ### Guidelines
 
 - Keep pull requests focused on a single feature or fix.
-- Add or update tests in `server/test.js` for any new API behaviour.
-- Follow the existing code style (ESLint config is in `.eslintrc.js`).
+- Follow the existing code style.
 - Update `.env.example` if you add new environment variables.
 - Do not commit `.env`, secrets, or generated label files.
 
 ---
 
-## 11. License
+## 14. License
 
 MIT License
 
@@ -537,4 +749,3 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-"# shipsplit" 
