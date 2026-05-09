@@ -4,14 +4,14 @@ const crypto = require('crypto');
 const ACCESS_TTL  = process.env.JWT_EXPIRES_IN         || '15m';
 const REFRESH_TTL = process.env.JWT_REFRESH_EXPIRES_IN || '30d';
 
-// Use secure cross-origin cookies when:
-//  (a) NODE_ENV is explicitly 'production', OR
-//  (b) CLIENT_URL is a non-localhost HTTPS URL  ← already set on Render
-// This avoids depending solely on NODE_ENV being set correctly.
-const IS_PROD    = process.env.NODE_ENV === 'production';
-const clientUrl  = process.env.CLIENT_URL || '';
-const IS_CROSS   = clientUrl.startsWith('https://') && !clientUrl.includes('localhost');
-const USE_SECURE = IS_PROD || IS_CROSS;
+// Use secure cross-origin cookies whenever we are NOT in local development.
+// Render does not always set NODE_ENV automatically, and CLIENT_URL may be
+// missing, so we default to secure and only turn it off for localhost.
+const clientUrl    = process.env.CLIENT_URL || '';
+const IS_LOCAL_DEV = process.env.NODE_ENV === 'development'
+  || clientUrl.includes('localhost')
+  || (!clientUrl && process.env.NODE_ENV !== 'production');
+const USE_SECURE   = !IS_LOCAL_DEV;
 
 /* ── Token generation ─────────────────────────────── */
 exports.generateTokens = (userId) => {

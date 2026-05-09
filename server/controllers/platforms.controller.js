@@ -147,6 +147,17 @@ exports.syncPlatform = async (req, res, next) => {
       return next(AppError.badRequest(`Manual sync via API not supported for ${name}`));
     }
 
+    // Check connection before calling the service so we return 400 not 500
+    const platform = await Platform
+      .findOne({ userId: req.user._id, platformName: 'amazon', isConnected: true })
+      .select('+_accessToken +_refreshToken');
+
+    if (!platform) {
+      return next(AppError.badRequest(
+        'Amazon account is not connected. Go to Settings → Platforms to connect your Amazon seller account.'
+      ));
+    }
+
     const result = await amazonSvc.syncUserOrders(req.user._id, {
       daysAgo: Number(req.body.daysAgo) || 7,
     });
