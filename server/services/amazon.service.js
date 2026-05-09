@@ -34,6 +34,92 @@ const IN_MARKETPLACE = 'A21TJRUUN4KGV'; // Amazon India marketplace ID
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* ══════════════════════════════════════════════════════════════════════
+   SANDBOX MOCK DATA
+   Used when AMAZON_SANDBOX=true so developers can test the full
+   accept → label flow without real SP-API credentials.
+   Shaped exactly like raw SP-API responses so normalizeOrder() works.
+   ══════════════════════════════════════════════════════════════════════ */
+
+const SANDBOX_ORDERS = [
+  {
+    AmazonOrderId:      '403-5893874-3272333',
+    OrderStatus:        'Unshipped',
+    PurchaseDate:       new Date(Date.now() - 1 * 86_400_000).toISOString(),
+    FulfillmentChannel: 'MFN',
+    BuyerInfo: { BuyerName: 'Rahul Sharma', BuyerEmail: 'rahul.sharma@example.com' },
+    ShippingAddress: {
+      AddressLine1: 'B-42, Sector 14', AddressLine2: 'Near Metro Station',
+      City: 'Noida', StateOrRegion: 'UP', PostalCode: '201301', CountryCode: 'IN',
+    },
+    OrderTotal:    { Amount: '1299.00', CurrencyCode: 'INR' },
+    PaymentMethod: 'Other', PaymentMethodDetails: [], IsGift: 'false',
+  },
+  {
+    AmazonOrderId:      '403-1234567-8901234',
+    OrderStatus:        'Unshipped',
+    PurchaseDate:       new Date(Date.now() - 2 * 86_400_000).toISOString(),
+    FulfillmentChannel: 'MFN',
+    BuyerInfo: { BuyerName: 'Priya Patel', BuyerEmail: 'priya.patel@example.com' },
+    ShippingAddress: {
+      AddressLine1: '12, MG Road',
+      City: 'Bangalore', StateOrRegion: 'KA', PostalCode: '560001', CountryCode: 'IN',
+    },
+    OrderTotal:    { Amount: '499.00', CurrencyCode: 'INR' },
+    PaymentMethod: 'COD', PaymentMethodDetails: ['COD'], IsGift: 'false',
+  },
+  {
+    AmazonOrderId:      '403-9876543-2109876',
+    OrderStatus:        'Unshipped',
+    PurchaseDate:       new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    FulfillmentChannel: 'MFN',
+    BuyerInfo: { BuyerName: 'Arjun Singh', BuyerEmail: 'arjun.singh@example.com' },
+    ShippingAddress: {
+      AddressLine1: 'C-101, Anna Nagar',
+      City: 'Chennai', StateOrRegion: 'TN', PostalCode: '600040', CountryCode: 'IN',
+    },
+    OrderTotal:    { Amount: '2499.00', CurrencyCode: 'INR' },
+    PaymentMethod: 'Other', PaymentMethodDetails: [], IsGift: 'true',
+  },
+  {
+    AmazonOrderId:      '403-4444444-5555555',
+    OrderStatus:        'Unshipped',
+    PurchaseDate:       new Date(Date.now() - 4 * 86_400_000).toISOString(),
+    FulfillmentChannel: 'MFN',
+    BuyerInfo: { BuyerName: 'Meera Joshi', BuyerEmail: 'meera.joshi@example.com' },
+    ShippingAddress: {
+      AddressLine1: '44 Park Street',
+      City: 'Kolkata', StateOrRegion: 'WB', PostalCode: '700016', CountryCode: 'IN',
+    },
+    OrderTotal:    { Amount: '799.00', CurrencyCode: 'INR' },
+    PaymentMethod: 'Other', PaymentMethodDetails: [], IsGift: 'false',
+  },
+];
+
+const SANDBOX_ITEMS = {
+  '403-5893874-3272333': [{
+    OrderItemId: 'sandbox-item-001', ASIN: 'B08N5WRWNW', SellerSKU: 'TSHIRT-BLK-M',
+    Title: 'Cotton Round Neck T-Shirt - Black - Medium', QuantityOrdered: 2,
+    ItemPrice: { Amount: '649.50', CurrencyCode: 'INR' }, IsGift: 'false',
+  }],
+  '403-1234567-8901234': [{
+    OrderItemId: 'sandbox-item-002', ASIN: 'B07XQXZXZX', SellerSKU: 'FACE-WASH-100ML',
+    Title: 'Natural Face Wash - 100ml', QuantityOrdered: 1,
+    ItemPrice: { Amount: '499.00', CurrencyCode: 'INR' }, IsGift: 'false',
+  }],
+  '403-9876543-2109876': [{
+    OrderItemId: 'sandbox-item-003', ASIN: 'B09KM2J3P1', SellerSKU: 'WATCH-STEEL-GLD',
+    Title: 'Premium Steel Watch - Gold Edition', QuantityOrdered: 1,
+    ItemPrice: { Amount: '2499.00', CurrencyCode: 'INR' }, IsGift: 'true',
+    GiftMessageText: 'Happy Birthday! Enjoy this gift.',
+  }],
+  '403-4444444-5555555': [{
+    OrderItemId: 'sandbox-item-004', ASIN: 'B08ABCDEFG', SellerSKU: 'BOOK-PY-ADV',
+    Title: 'Advanced Python Programming - 3rd Edition', QuantityOrdered: 1,
+    ItemPrice: { Amount: '799.00', CurrencyCode: 'INR' }, IsGift: 'false',
+  }],
+};
+
+/* ══════════════════════════════════════════════════════════════════════
    AWS SIGNATURE v4
    ══════════════════════════════════════════════════════════════════════ */
 
@@ -274,6 +360,13 @@ async function ensureFreshToken(platform) {
  * @returns {{ orders: Object[], nextToken: string|null }}
  */
 exports.fetchOrders = async (platform, { createdAfter, nextToken } = {}) => {
+  /* ── Sandbox: return mock orders, skip real API call ─────────────── */
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    if (nextToken) return { orders: [], nextToken: null };
+    logger.info('[amazon sandbox] fetchOrders → returning mock orders');
+    return { orders: SANDBOX_ORDERS, nextToken: null };
+  }
+
   await ensureFreshToken(platform);
 
   const params = {
@@ -305,6 +398,21 @@ exports.fetchOrders = async (platform, { createdAfter, nextToken } = {}) => {
  * @returns {Object[]} Array of SP-API OrderItem objects
  */
 exports.fetchOrderItems = async (platform, orderId) => {
+  /* ── Sandbox: return mock items, skip real API call ──────────────── */
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    const items = SANDBOX_ITEMS[orderId] || [{
+      OrderItemId: `sandbox-item-${orderId}`,
+      ASIN:        'B00SANDBOX0',
+      SellerSKU:   'SANDBOX-SKU-001',
+      Title:       'Sandbox Test Product',
+      QuantityOrdered: 1,
+      ItemPrice:   { Amount: '100.00', CurrencyCode: 'INR' },
+      IsGift:      'false',
+    }];
+    logger.info(`[amazon sandbox] fetchOrderItems(${orderId}) → ${items.length} item(s)`);
+    return items;
+  }
+
   await ensureFreshToken(platform);
 
   let allItems  = [];
@@ -358,14 +466,133 @@ exports.fetchShippingLabel = async (platform, shipmentId) => {
 };
 
 /* ══════════════════════════════════════════════════════════════════════
+   5b. SANDBOX LABEL GENERATOR — pdf-lib
+   Produces a realistic Amazon Easy Ship label when AMAZON_SANDBOX=true.
+   ══════════════════════════════════════════════════════════════════════ */
+
+async function generateSandboxLabelPDF(order, awb) {
+  const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
+
+  // A5 landscape — 419 × 298 pt  (Amazon Easy Ship default)
+  const doc    = await PDFDocument.create();
+  const page   = doc.addPage([419, 298]);
+  const bold   = await doc.embedFont(StandardFonts.HelveticaBold);
+  const normal = await doc.embedFont(StandardFonts.Helvetica);
+
+  const W   = 419;
+  const H   = 298;
+  const amzOrange = rgb(1, 0.596, 0);   // #FF9800
+  const darkGrey  = rgb(0.2, 0.2, 0.2);
+  const midGrey   = rgb(0.55, 0.55, 0.55);
+  const lightGrey = rgb(0.93, 0.93, 0.93);
+
+  /* ── Orange header bar ─────────────────────────────────────────────── */
+  page.drawRectangle({ x: 0, y: H - 42, width: W, height: 42, color: amzOrange });
+  // "amazon" logo text
+  page.drawText('amazon', {
+    x: 12, y: H - 30, size: 22, font: bold, color: rgb(0, 0, 0),
+  });
+  // "Easy Ship" sub-label
+  page.drawText('Easy Ship', {
+    x: 112, y: H - 29, size: 12, font: normal, color: rgb(0.15, 0.15, 0.15),
+  });
+  // "SANDBOX" badge (right side)
+  page.drawRectangle({ x: W - 90, y: H - 37, width: 82, height: 24, color: rgb(0,0,0) });
+  page.drawText('SANDBOX', { x: W - 82, y: H - 30, size: 10, font: bold, color: rgb(1,1,1) });
+
+  /* ── Order ID bar ──────────────────────────────────────────────────── */
+  page.drawRectangle({ x: 0, y: H - 60, width: W, height: 18, color: lightGrey });
+  page.drawText(`Order ID: ${order.orderId || 'N/A'}`, {
+    x: 12, y: H - 55, size: 9, font: normal, color: midGrey,
+  });
+
+  /* ── SHIP TO section ───────────────────────────────────────────────── */
+  const addr = order.address || {};
+  const addrLines = [
+    order.buyerName,
+    addr.line1,
+    addr.line2,
+    [addr.city, addr.state].filter(Boolean).join(', '),
+    addr.pincode,
+    addr.country || 'India',
+  ].filter(Boolean);
+
+  page.drawText('SHIP TO', { x: 12, y: H - 80, size: 8, font: bold, color: midGrey });
+  page.drawLine({ start: { x: 12, y: H - 82 }, end: { x: 210, y: H - 82 }, thickness: 0.5, color: midGrey });
+
+  let y = H - 94;
+  for (const line of addrLines) {
+    page.drawText(String(line).slice(0, 38), { x: 12, y, size: 10, font: line === order.buyerName ? bold : normal, color: darkGrey });
+    y -= 14;
+  }
+
+  /* ── Divider ───────────────────────────────────────────────────────── */
+  page.drawLine({ start: { x: 220, y: H - 62 }, end: { x: 220, y: 50 }, thickness: 0.5, color: midGrey });
+
+  /* ── Product & SKU (right column) ─────────────────────────────────── */
+  page.drawText('PRODUCT', { x: 228, y: H - 80, size: 8, font: bold, color: midGrey });
+  page.drawLine({ start: { x: 228, y: H - 82 }, end: { x: W - 10, y: H - 82 }, thickness: 0.5, color: midGrey });
+
+  const productName = (order.productName || 'Product').slice(0, 30);
+  const sku         = order.sku || 'N/A';
+  page.drawText(productName, { x: 228, y: H - 95,  size: 10, font: bold,   color: darkGrey });
+  page.drawText(`SKU: ${sku}`, { x: 228, y: H - 110, size: 9,  font: normal, color: midGrey  });
+  const qty = order.quantity || 1;
+  page.drawText(`Qty: ${qty}`, { x: 228, y: H - 124, size: 9, font: normal, color: midGrey });
+
+  /* ── COD badge ─────────────────────────────────────────────────────── */
+  if (order.isCOD) {
+    page.drawRectangle({ x: 228, y: H - 148, width: 50, height: 18, color: rgb(0.9, 0.2, 0.2) });
+    page.drawText('C O D', { x: 236, y: H - 141, size: 9, font: bold, color: rgb(1, 1, 1) });
+    if (order.codAmount) {
+      page.drawText(`₹${order.codAmount}`, { x: 284, y: H - 141, size: 9, font: bold, color: darkGrey });
+    }
+  }
+
+  /* ── AWB section ───────────────────────────────────────────────────── */
+  page.drawRectangle({ x: 0, y: 48, width: W, height: 40, color: lightGrey });
+  page.drawText('AWB NUMBER', { x: 12, y: 81, size: 7, font: bold, color: midGrey });
+  page.drawText(awb, { x: 12, y: 62, size: 14, font: bold, color: darkGrey });
+
+  // Simple barcode simulation (alternating black/white bars)
+  let bx = 230;
+  const barcodeDigits = awb.replace(/\D/g, '').slice(0, 20);
+  for (const ch of barcodeDigits) {
+    const barWidth = (parseInt(ch, 10) % 3) + 1;
+    page.drawRectangle({ x: bx, y: 52, width: barWidth, height: 28, color: rgb(0, 0, 0) });
+    bx += barWidth + 2;
+  }
+
+  /* ── Footer ────────────────────────────────────────────────────────── */
+  page.drawRectangle({ x: 0, y: 0, width: W, height: 20, color: rgb(0.12, 0.12, 0.12) });
+  page.drawText('ShipSplit  •  Powered by Amazon Easy Ship  •  sandbox label', {
+    x: 12, y: 6, size: 7, font: normal, color: rgb(0.7, 0.7, 0.7),
+  });
+  const ts = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+  page.drawText(ts, { x: W - 60, y: 6, size: 7, font: normal, color: rgb(0.7, 0.7, 0.7) });
+
+  return Buffer.from(await doc.save());
+}
+
+/* ══════════════════════════════════════════════════════════════════════
    5c. GET ELIGIBLE SHIPPING SERVICES — POST /mfn/v0/eligibleShippingServices
    ══════════════════════════════════════════════════════════════════════ */
 
 /**
  * Returns an array of eligible shipping service objects for an MFN order.
- * Calls Amazon's real API (sandbox or production based on AMAZON_SANDBOX env).
+ * Sandbox: returns static mock service. Production: calls SP-API.
  */
 exports.getEligibleShippingServices = async (platform, order) => {
+  /* ── Sandbox: return static mock service ─────────────────────────── */
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    return [{
+      ShippingServiceId:   'AMAZON_EASY_SHIP',
+      ShippingServiceName: 'Amazon Easy Ship',
+      Rate: { Amount: '45.00', CurrencyCode: 'INR' },
+      LatestEstimatedDeliveryDate: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+    }];
+  }
+
   await ensureFreshToken(platform);
 
   const body = {
@@ -417,6 +644,15 @@ exports.getEligibleShippingServices = async (platform, order) => {
  * Amazon provides the label — we do not generate one ourselves.
  */
 exports.createMFNShipment = async (platform, order, shippingServiceId, settings = {}) => {
+  /* ── Sandbox: generate local label PDF, skip real API call ───────── */
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    const awb         = `AMZL${Date.now()}IN`;
+    const shipmentId  = `SANDBOX-${order.orderId}`;
+    const labelBuffer = await generateSandboxLabelPDF(order, awb);
+    logger.info(`[amazon sandbox] createMFNShipment → AWB ${awb}`);
+    return { shipmentId, awb, labelBuffer, labelFormat: 'PDF' };
+  }
+
   await ensureFreshToken(platform);
 
   const body = {

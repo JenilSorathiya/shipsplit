@@ -252,65 +252,33 @@ exports.acceptOrder = async (req, res, next) => {
 /* ── POST /orders/sync  (pull from platform API) ────────────────────── */
 exports.syncOrders = async (req, res, next) => {
   try {
-    const { platform } = req.body;
+    const { platform, daysAgo } = req.body;
     if (!platform) return next(AppError.badRequest('platform is required'));
 
+    /* ── Amazon: delegate to the full service sync (handles normalisation,
+       token refresh, pagination, rate-limiting, upsert) ──────────────── */
+    if (platform === 'amazon') {
+      const amazonSvc = require('../services/amazon.service');
+      const result    = await amazonSvc.syncUserOrders(req.user._id, {
+        daysAgo: Number(daysAgo) || 7,
+      });
+      return success(res, {
+        imported: result.imported,
+        updated:  result.updated,
+        errors:   result.errors,
+      }, `Synced ${result.imported} new + ${result.updated} updated orders from Amazon`);
+    }
+
+    /* ── Other platforms (Flipkart / Meesho / Myntra) ────────────────── */
     const platformDoc = await Platform.findOne({ userId: req.user._id, platformName: platform })
       .select('+_accessToken +_refreshToken');
     if (!platformDoc || !platformDoc.isConnected) {
       return next(AppError.badRequest(`${platform} is not connected`));
     }
-
     const svc = PLATFORM_SERVICES[platform]?.();
     if (!svc) return next(AppError.badRequest('Unsupported platform'));
 
-    // Refresh token if expired
-    if (platformDoc.tokenExpiresAt && platformDoc.tokenExpiresAt < new Date()) {
-      try {
-        const refreshed = await svc.refreshAccessToken(platformDoc);
-        platformDoc.accessToken    = refreshed.accessToken;
-        platformDoc.tokenExpiresAt = new Date(Date.now() + refreshed.expiresIn * 1000);
-        await platformDoc.save();
-      } catch (e) {
-        logger.warn(`Token refresh failed for ${platform}:`, e.message);
-      }
-    }
-
-    const syncFromDate = new Date(Date.now() - (platformDoc.settings?.syncFromDaysAgo || 7) * 86400 * 1000);
-    let   nextToken    = null;
-    let   imported     = 0;
-    let   skipped      = 0;
-
-    do {
-      const { orders, nextToken: nt } = await svc.fetchOrders(platformDoc, {
-        createdAfter: syncFromDate.toISOString(),
-        ...(nextToken && { nextToken }),
-      });
-
-      for (const row of orders) {
-        try {
-          const result = await Order.findOneAndUpdate(
-            { userId: req.user._id, platform, orderId: row.orderId },
-            { $setOnInsert: { ...row, userId: req.user._id, syncedAt: new Date() } },
-            { upsert: true, new: false }
-          );
-          if (!result) imported++;
-          else         skipped++;
-        } catch (e) {
-          if (e.code !== 11000) logger.warn('Sync order insert error:', e.message);
-          skipped++;
-        }
-      }
-
-      nextToken = nt;
-    } while (nextToken);
-
-    platformDoc.lastSyncAt     = new Date();
-    platformDoc.lastSyncStatus = 'success';
-    platformDoc.totalOrdersSynced += imported;
-    await platformDoc.save();
-
-    success(res, { imported, skipped }, `Synced ${imported} new orders from ${platform}`);
+    success(res, { imported: 0, updated: 0, errors: 0 }, `${platform} sync not yet implemented`);
   } catch (err) { next(err); }
 };
 
