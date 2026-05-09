@@ -187,20 +187,22 @@ exports.acceptOrder = async (req, res, next) => {
       }
     }
 
-    // 1. Get eligible shipping services
-    let services;
-    try {
-      services = await amazonSvc.getEligibleShippingServices(platformDoc, order.toObject());
-    } catch (svcErr) {
-      logger.error('[acceptOrder] getEligibleShippingServices failed:', svcErr.message);
-      return next(AppError.badRequest(`Could not get shipping services: ${svcErr.message}`));
-    }
-    const serviceId = services[0]?.ShippingServiceId;
-    if (!serviceId) {
-      return next(AppError.badRequest('No eligible shipping services available for this order'));
+    // 1 + 2 combined: fetch eligible services and create shipment.
+    //   In sandbox both calls are instant mocks so no perf concern.
+    //   In production getEligibleShippingServices is skipped — we always
+    //   use Amazon Easy Ship (AMAZON_EASY_SHIP) which is the only available
+    //   service for Indian MFN sellers, saving one full SP-API round-trip.
+    const isSandboxMode = process.env.AMAZON_SANDBOX === 'true';
+    let serviceId;
+    if (isSandboxMode) {
+      const services = await amazonSvc.getEligibleShippingServices(platformDoc, order.toObject());
+      serviceId = services[0]?.ShippingServiceId;
+      if (!serviceId) return next(AppError.badRequest('No eligible shipping services available'));
+    } else {
+      // Skip the eligibleShippingServices round-trip in production — always AMAZON_EASY_SHIP
+      serviceId = 'AMAZON_EASY_SHIP';
     }
 
-    // 2. Create MFN shipment — save only AWB + shipmentId (DPP: no label storage)
     let shipment;
     try {
       shipment = await amazonSvc.createMFNShipment(platformDoc, order.toObject(), serviceId);

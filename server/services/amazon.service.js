@@ -473,7 +473,18 @@ exports.fetchShippingLabel = async (platform, shipmentId) => {
    Produces a realistic Amazon Easy Ship label when AMAZON_SANDBOX=true.
    ══════════════════════════════════════════════════════════════════════ */
 
+// In-memory cache: key = `${orderId}:${awb}` → Buffer
+// Avoids regenerating the same PDF on every download click.
+// Cache is process-scoped (cleared on redeploy) which is fine — sandbox only.
+const _sandboxLabelCache = new Map();
+
 exports.generateSandboxLabelPDF = async function generateSandboxLabelPDF(order, awb) {
+  const cacheKey = `${order.orderId || order._id}:${awb}`;
+  if (_sandboxLabelCache.has(cacheKey)) {
+    logger.info('[amazon sandbox] generateSandboxLabelPDF → cache hit');
+    return _sandboxLabelCache.get(cacheKey);
+  }
+
   const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 
   // A5 landscape — 419 × 298 pt  (Amazon Easy Ship default)
@@ -574,7 +585,14 @@ exports.generateSandboxLabelPDF = async function generateSandboxLabelPDF(order, 
   const ts = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   page.drawText(ts, { x: W - 60, y: 6, size: 7, font: normal, color: rgb(0.7, 0.7, 0.7) });
 
-  return Buffer.from(await doc.save());
+  const buf = Buffer.from(await doc.save());
+  // Store in cache (max 50 entries — prevent unbounded memory growth)
+  if (_sandboxLabelCache.size >= 50) {
+    const firstKey = _sandboxLabelCache.keys().next().value;
+    _sandboxLabelCache.delete(firstKey);
+  }
+  _sandboxLabelCache.set(cacheKey, buf);
+  return buf;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -712,9 +730,13 @@ exports.createMFNShipment = async (platform, order, shippingServiceId, settings 
  * Cancels an MFN shipment via Amazon's API.
  */
 exports.cancelMFNShipment = async (platform, shipmentId) => {
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    logger.info('[amazon sandbox] cancelMFNShipment → skipped (no real API call)');
+    return { success: true };
+  }
   await ensureFreshToken(platform);
   await spRequest({ platform, method: 'DELETE', path: `/mfn/v0/shipments/${shipmentId}` });
-  logger.info(`[amazon] cancelled MFN shipment ${shipmentId}`);
+  logger.info('[amazon] MFN shipment cancelled');
   return { success: true };
 };
 
@@ -730,6 +752,10 @@ exports.cancelMFNShipment = async (platform, shipmentId) => {
  * Reason codes: NO_INVENTORY | PRICE_ERROR | SELLER_CANCEL | CUSTOMER_CANCEL
  */
 exports.cancelAmazonOrder = async (platform, amazonOrderId, reason = 'SELLER_CANCEL') => {
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    logger.info(`[amazon sandbox] cancelAmazonOrder → skipped (reason: ${reason})`);
+    return { success: true };
+  }
   await ensureFreshToken(platform);
 
   await spRequest({
