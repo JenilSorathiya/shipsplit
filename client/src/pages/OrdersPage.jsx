@@ -207,6 +207,10 @@ export default function OrdersPage() {
   /* ── Header overflow menu ───────────────────────────────── */
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
 
+  /* ── Bulk accept state ──────────────────────────────────── */
+  const [bulkAccepting,     setBulkAccepting]     = useState(false);
+  const [bulkAcceptProgress, setBulkAcceptProgress] = useState({ done: 0, total: 0 });
+
   /* ── Reject / cancel state ──────────────────────────────── */
   const [rejectTarget,  setRejectTarget]  = useState(null);  // order object being rejected
   const [rejectingId,   setRejectingId]   = useState(null);  // orderId in flight
@@ -348,6 +352,51 @@ export default function OrdersPage() {
     toast.success(`Deleted ${deleted} order${deleted !== 1 ? 's' : ''}`);
   };
 
+  /* ── Bulk accept all selected pending orders ───────────── */
+  const handleBulkAccept = async () => {
+    // Only operate on pending orders in the selection
+    const pendingIds = orders
+      .filter((o) => selected.has(o._id) && o.status === 'pending')
+      .map((o) => o._id);
+
+    if (pendingIds.length === 0) {
+      toast.error('No pending orders selected');
+      return;
+    }
+
+    setBulkAccepting(true);
+    setBulkAcceptProgress({ done: 0, total: pendingIds.length });
+
+    let accepted = 0;
+    let failed   = 0;
+
+    for (const id of pendingIds) {
+      try {
+        const { data } = await api.post(`/orders/${id}/accept`);
+        setOrders((prev) =>
+          prev.map((o) =>
+            o._id === id
+              ? { ...o, status: 'label_generated', awb: data?.awb, shipmentId: data?.shipmentId }
+              : o
+          )
+        );
+        accepted++;
+      } catch {
+        failed++;
+      }
+      setBulkAcceptProgress({ done: accepted + failed, total: pendingIds.length });
+    }
+
+    setBulkAccepting(false);
+    setSelected(new Set());
+
+    if (failed === 0) {
+      toast.success(`${accepted} order${accepted !== 1 ? 's' : ''} accepted — labels ready to download`);
+    } else {
+      toast.success(`${accepted} accepted, ${failed} failed`);
+    }
+  };
+
   /* ── Client-side filter + paginate ─────────────────────── */
   const filtered = useMemo(() => {
     let data = orders;
@@ -481,16 +530,46 @@ export default function OrdersPage() {
       {/* ── Bulk action bar ──────────────────────────── */}
       {someSelected && (
         <div className="flex items-center gap-3 px-4 py-3 bg-primary-50 border border-primary-100 rounded-xl animate-fade-in">
-          <span className="text-sm font-semibold text-primary-700">{selected.size} order{selected.size !== 1 ? 's' : ''} selected</span>
+          <span className="text-sm font-semibold text-primary-700">
+            {selected.size} order{selected.size !== 1 ? 's' : ''} selected
+          </span>
+
+          {/* Progress indicator while bulk-accepting */}
+          {bulkAccepting && (
+            <span className="flex items-center gap-1.5 text-xs text-primary-700 font-medium">
+              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+              Accepting {bulkAcceptProgress.done}/{bulkAcceptProgress.total}…
+            </span>
+          )}
+
           <div className="flex gap-2 ml-auto flex-wrap">
+            {/* Accept all selected pending orders */}
+            <button
+              onClick={handleBulkAccept}
+              disabled={bulkAccepting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
+            >
+              {bulkAccepting
+                ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                : <CheckCircleIcon className="h-3.5 w-3.5" />
+              }
+              {bulkAccepting ? 'Accepting…' : 'Accept Selected'}
+            </button>
+
             <button
               onClick={handleDeleteSelected}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold transition-colors"
+              disabled={bulkAccepting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold transition-colors disabled:opacity-60"
             >
               <TrashIcon className="h-3.5 w-3.5" />
               Delete Selected
             </button>
-            <button onClick={() => setSelected(new Set())} className="btn-ghost btn-sm text-gray-500">
+
+            <button
+              onClick={() => setSelected(new Set())}
+              disabled={bulkAccepting}
+              className="btn-ghost btn-sm text-gray-500 disabled:opacity-60"
+            >
               <XMarkIcon className="h-3.5 w-3.5" />
               Deselect
             </button>
