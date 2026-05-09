@@ -936,7 +936,7 @@ exports.syncUserOrders = async (userId, { daysAgo } = {}) => {
     platform.lastSyncAt         = new Date();
     platform.lastSyncStatus     = errors > 0 ? 'partial' : 'success';
     platform.lastSyncError      = errors > 0 ? `${errors} orders failed to sync` : null;
-    platform.totalOrdersSynced += imported;
+    platform.totalOrdersSynced  = (platform.totalOrdersSynced || 0) + imported;
     await platform.save();
 
     logger.info(`Amazon sync done — user ${userId}: ${imported} new, ${updated} updated, ${errors} errors`);

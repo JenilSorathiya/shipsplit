@@ -163,18 +163,18 @@ exports.syncPlatform = async (req, res, next) => {
     }
     // In sandbox: syncUserOrders auto-creates the Platform doc if missing
 
+    logger.info(`[syncPlatform] starting amazon sync for user ${req.user._id} (sandbox=${isSandbox})`);
+
     let result;
     try {
       result = await amazonSvc.syncUserOrders(req.user._id, {
         daysAgo: Number(req.body?.daysAgo) || 7,
       });
     } catch (svcErr) {
-      // Convert service-layer errors to friendly 400s instead of 500s
-      const msg = svcErr.message || 'Sync failed';
-      if (msg.includes('not connected') || msg.includes('token expired') || msg.includes('reconnect')) {
-        return next(AppError.badRequest(msg));
-      }
-      throw svcErr;  // unknown error — let errorHandler give 500
+      // Log full error so Render logs reveal the real cause
+      logger.error('[syncPlatform] syncUserOrders threw:', svcErr.message, svcErr.stack);
+      // Return a 400 with the actual message instead of a blank 500
+      return next(AppError.badRequest(`Sync failed: ${svcErr.message}`));
     }
 
     success(
