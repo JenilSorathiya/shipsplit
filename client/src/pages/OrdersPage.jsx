@@ -201,8 +201,9 @@ export default function OrdersPage() {
   const [page,     setPage]     = useState(1);
 
   /* ── Label action state ─────────────────────────────────── */
-  const [acceptingIds,   setAcceptingIds]   = useState(new Set());
-  const [downloadingIds, setDownloadingIds] = useState(new Set());
+  const [acceptingIds,        setAcceptingIds]        = useState(new Set());
+  const [downloadingIds,      setDownloadingIds]      = useState(new Set());
+  const [confirmShippingIds,  setConfirmShippingIds]  = useState(new Set());
 
   /* ── Header overflow menu ───────────────────────────────── */
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
@@ -306,6 +307,22 @@ export default function OrdersPage() {
       toast.error(err.response?.data?.message || 'Failed to cancel order');
     } finally {
       setRejectingId(null);
+    }
+  };
+
+  /* ── Confirm shipped → tell Amazon package was handed to carrier ───── */
+  const handleConfirmShipped = async (orderId) => {
+    setConfirmShippingIds((prev) => new Set(prev).add(orderId));
+    try {
+      await api.post(`/orders/${orderId}/confirm-shipped`);
+      setOrders((prev) =>
+        prev.map((o) => o._id === orderId ? { ...o, status: 'shipped', shippedAt: new Date() } : o)
+      );
+      toast.success('Amazon notified — order marked as Shipped!');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to confirm shipment');
+    } finally {
+      setConfirmShippingIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
     }
   };
 
@@ -484,7 +501,10 @@ export default function OrdersPage() {
       <div className="flex items-start gap-3 px-4 py-3 bg-primary-50 border border-primary-100 rounded-xl">
         <CheckCircleIcon className="h-4 w-4 text-primary-500 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-primary-700">
-          <span className="font-semibold">How it works:</span> Click <strong>Accept Order</strong> on any pending order — ShipSplit automatically generates a shipping label. Once ready, click <strong>Download Label</strong> to print and ship.
+          <span className="font-semibold">How it works:</span>{' '}
+          <strong>1.</strong> Click <strong>Accept</strong> on a pending order to create the shipment.{' '}
+          <strong>2.</strong> Click <strong>Label</strong> to download and print the shipping label.{' '}
+          <strong>3.</strong> Hand the package to the courier, then click <strong>Mark Shipped</strong> — this notifies Amazon and updates the buyer.
         </p>
       </div>
 
@@ -631,14 +651,15 @@ export default function OrdersPage() {
                   </td>
                 </tr>
               ) : paged.map((order) => {
-                const isSel          = selected.has(order._id);
-                const plt            = PLATFORM_STYLE[order.platform] || {};
-                const displayId      = order.orderId || order._id;
-                const displayProduct = order.productName || order.items?.[0]?.name || '—';
-                const displaySku     = order.sku || order.items?.[0]?.sku || '—';
-                const displayStatus  = order.status || 'pending';
-                const isAccepting    = acceptingIds.has(order._id);
-                const isDownloading  = downloadingIds.has(order._id);
+                const isSel               = selected.has(order._id);
+                const plt                 = PLATFORM_STYLE[order.platform] || {};
+                const displayId           = order.orderId || order._id;
+                const displayProduct      = order.productName || order.items?.[0]?.name || '—';
+                const displaySku          = order.sku || order.items?.[0]?.sku || '—';
+                const displayStatus       = order.status || 'pending';
+                const isAccepting         = acceptingIds.has(order._id);
+                const isDownloading       = downloadingIds.has(order._id);
+                const isConfirmingShipped = confirmShippingIds.has(order._id);
 
                 return (
                   <tr key={order._id} className={isSel ? 'table-row-selected' : 'table-row'}>
@@ -689,22 +710,36 @@ export default function OrdersPage() {
                             Cancelling…
                           </span>
                         ) : displayStatus === 'label_generated' ? (
-                          /* Label ready immediately after accept — Download + Cancel */
+                          /* Label ready — Download + Mark as Shipped + Cancel */
                           <>
                             <button
                               onClick={() => handleDownloadLabel(order._id, order.orderId)}
-                              disabled={isDownloading}
+                              disabled={isDownloading || isConfirmingShipped}
                               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-success-50 text-success-700 border border-success-200 hover:bg-success-100 text-xs font-semibold transition-colors disabled:opacity-60"
+                              title="Download shipping label"
                             >
                               {isDownloading
                                 ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                                 : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
                               }
-                              {isDownloading ? 'Downloading…' : 'Download Label'}
+                              {isDownloading ? 'Downloading…' : 'Label'}
+                            </button>
+                            <button
+                              onClick={() => handleConfirmShipped(order._id)}
+                              disabled={isConfirmingShipped || isDownloading}
+                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
+                              title="Confirm package handed to carrier — notifies Amazon"
+                            >
+                              {isConfirmingShipped
+                                ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                                : <CheckCircleIcon className="h-3.5 w-3.5" />
+                              }
+                              {isConfirmingShipped ? 'Confirming…' : 'Mark Shipped'}
                             </button>
                             <button
                               onClick={() => setRejectTarget(order)}
-                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                              disabled={isConfirmingShipped}
+                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
                               title="Cancel order"
                             >
                               <NoSymbolIcon className="h-3.5 w-3.5" />

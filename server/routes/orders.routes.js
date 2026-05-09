@@ -12,6 +12,7 @@ router.get('/',       validate(v.getOrders, 'query'), ctrl.getOrders);
 router.get('/:id',                                    ctrl.getOrder);
 router.get('/:id/label',                              ctrl.downloadOrderLabel);
 router.post('/:id/accept',                            ctrl.acceptOrder);
+router.post('/:id/confirm-shipped',                   ctrl.confirmOrderShipped);
 router.post('/:id/reject',                            ctrl.rejectOrder);
 router.patch('/:id',  validate(v.updateOrder),        ctrl.updateOrder);
 router.delete('/:id',                                 ctrl.deleteOrder);

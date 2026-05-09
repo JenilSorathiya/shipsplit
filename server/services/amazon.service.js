@@ -747,6 +747,83 @@ exports.cancelAmazonOrder = async (platform, amazonOrderId, reason = 'SELLER_CAN
 };
 
 /* ══════════════════════════════════════════════════════════════════════
+   5g. CONFIRM SHIPMENT — POST /orders/v0/orders/{orderId}/shipment
+   Tells Amazon the package has been handed to the carrier.
+   This is MANDATORY after creating an MFN shipment — without it the order
+   stays "Unshipped" on Amazon, the buyer is never notified, and the seller
+   accrues a Late Shipment Rate penalty.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Map our internal courier partner names → Amazon carrier codes.
+ * Amazon accepts free-form carrier codes for Indian couriers.
+ */
+const CARRIER_CODE_MAP = {
+  delhivery:  'Delhivery',
+  shiprocket: 'Other',
+  bluedart:   'Blue Dart',
+  dtdc:       'DTDC',
+  ekart:      'Ekart',
+  xpressbees: 'XpressBees',
+  other:      'Other',
+};
+
+/**
+ * Confirm that an MFN order has been handed to the carrier.
+ *
+ * @param {Object}   platform      - Platform doc with decrypted tokens
+ * @param {string}   amazonOrderId - The Amazon order ID (e.g. '403-xxxxxxx-xxxxxxx')
+ * @param {Object[]} items         - Array of { orderItemId, quantity }
+ * @param {string}   awb           - Tracking / AWB number from createMFNShipment
+ * @param {string}   [carrierCode] - Our internal courier name (default 'other')
+ * @param {Date}     [shipDate]    - Date shipped (default: now)
+ */
+exports.confirmShipment = async (platform, amazonOrderId, items, awb, carrierCode = 'other', shipDate) => {
+  /* ── Sandbox: skip real API call ────────────────────────────────── */
+  if (process.env.AMAZON_SANDBOX === 'true') {
+    logger.info('[amazon sandbox] confirmShipment → acknowledged (no real API call)');
+    return { success: true };
+  }
+
+  await ensureFreshToken(platform);
+
+  const carrier     = CARRIER_CODE_MAP[carrierCode?.toLowerCase()] || 'Other';
+  const date        = (shipDate || new Date()).toISOString();
+  const orderItems  = (items || []).map((i) => ({
+    orderItemId: i.orderItemId || i._id?.toString(),
+    quantity:    i.quantity    || 1,
+  })).filter((i) => i.orderItemId);
+
+  const body = {
+    packageDetail: {
+      packageReferenceId: awb,
+      carrierCode:        carrier,
+      carrierName:        carrier,
+      shippingMethod:     'Standard',
+      trackingNumber:     awb,
+      shipDate:           date,
+      orderItems:         orderItems.length ? orderItems : [{ orderItemId: '1', quantity: 1 }],
+    },
+    marketplaceId: process.env.AMAZON_MARKETPLACE_ID || IN_MARKETPLACE,
+  };
+
+  try {
+    await spRequest({
+      platform,
+      method: 'POST',
+      path:   `/orders/v0/orders/${encodeURIComponent(amazonOrderId)}/shipment`,
+      body,
+    });
+    logger.info('[amazon] shipment confirmed for order (AWB masked)');
+    return { success: true };
+  } catch (err) {
+    // Amazon returns 200 with no body on success; anything else is an error
+    const spErr = err.response?.data?.errors?.[0];
+    throw new Error(spErr ? `${spErr.code}: ${spErr.message}` : err.message);
+  }
+};
+
+/* ══════════════════════════════════════════════════════════════════════
    6. NORMALIZE ORDER
    Maps raw SP-API order + items array → our Order model shape
    ══════════════════════════════════════════════════════════════════════ */

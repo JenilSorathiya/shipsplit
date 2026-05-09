@@ -294,6 +294,70 @@ exports.downloadOrderLabel = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+/* ── POST /orders/:id/confirm-shipped ────────────────────────────────────
+   Final mandatory step of the Amazon MFN workflow.
+   Tells Amazon the package has been handed to the carrier:
+     POST /orders/v0/orders/{amazonOrderId}/shipment
+   Without this call the order stays "Unshipped" on Amazon forever —
+   buyer never gets a dispatch notification and seller's Late Shipment
+   Rate metric gets penalised.
+───────────────────────────────────────────────────────────────────────── */
+exports.confirmOrderShipped = async (req, res, next) => {
+  try {
+    const order = await Order.findOne({ _id: req.params.id, userId: req.user._id });
+    if (!order) return next(AppError.notFound('Order not found'));
+
+    if (order.status !== 'label_generated') {
+      return next(AppError.badRequest(
+        `Order status is '${order.status}' — only label_generated orders can be confirmed as shipped`
+      ));
+    }
+    if (!order.awb) {
+      return next(AppError.badRequest('No AWB on this order — accept the order first'));
+    }
+
+    const isSandbox = process.env.AMAZON_SANDBOX === 'true';
+    const amazonSvc = require('../services/amazon.service');
+
+    if (!isSandbox) {
+      const platformDoc = await Platform
+        .findOne({ userId: req.user._id, platformName: 'amazon', isConnected: true })
+        .select('+_accessToken +_refreshToken');
+      if (!platformDoc) {
+        return next(AppError.badRequest('Amazon account is not connected'));
+      }
+
+      try {
+        await amazonSvc.confirmShipment(
+          platformDoc,
+          order.orderId,
+          order.items || [],
+          order.awb,
+          order.courierPartner || 'other',
+          new Date()
+        );
+      } catch (svcErr) {
+        logger.error('[confirmOrderShipped] Amazon confirmShipment failed:', svcErr.message);
+        return next(AppError.badRequest(`Amazon shipment confirmation failed: ${svcErr.message}`));
+      }
+    }
+
+    // Update local status
+    order.status        = 'shipped';
+    order.shippedAt     = new Date();
+    order.platformStatus = 'Shipped';
+    await order.save();
+
+    logger.info('[confirmOrderShipped] order marked shipped');
+    success(res, {
+      orderId:    order._id,
+      status:     'shipped',
+      shippedAt:  order.shippedAt,
+      awb:        order.awb,
+    }, 'Shipment confirmed — Amazon notified');
+  } catch (err) { next(err); }
+};
+
 /* ── POST /orders/sync  (pull from platform API) ────────────────────── */
 exports.syncOrders = async (req, res, next) => {
   try {
