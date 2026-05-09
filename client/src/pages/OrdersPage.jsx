@@ -381,6 +381,19 @@ export default function OrdersPage() {
     }
   };
 
+  /* ── Clear all orders ───────────────────────────────────── */
+  const handleClearAll = async () => {
+    if (!window.confirm('Delete ALL orders from your account? This cannot be undone.')) return;
+    try {
+      const { data } = await api.delete('/orders');
+      toast.success(`Cleared ${data?.deleted ?? 0} orders`);
+      setOrders([]);
+      setLabelStates({});
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to clear orders');
+    }
+  };
+
   /* ── Client-side filter + paginate ─────────────────────── */
   const filtered = useMemo(() => {
     let data = orders;
@@ -428,9 +441,12 @@ export default function OrdersPage() {
           <p className="page-sub">Accept orders to auto-generate shipping labels, then download and print.</p>
         </div>
         <div className="flex gap-2">
-          <button className="btn-secondary btn-sm">
-            <ArrowDownTrayIcon className="h-3.5 w-3.5" />
-            Export CSV
+          <button
+            onClick={handleClearAll}
+            className="btn-secondary btn-sm text-red-600 hover:text-red-700 hover:border-red-300"
+          >
+            <TrashIcon className="h-3.5 w-3.5" />
+            Clear All
           </button>
           <button
             onClick={handleSync}

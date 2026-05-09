@@ -30,4 +30,7 @@ router.post('/:id/assign-courier',  validate(v.assignCourier),     ctrl.assignCo
 /* ── Platform sync ───────────────────────────────────────────────────── */
 router.post('/sync', ctrl.syncOrders);
 
+/* ── Delete all orders for this user (clears stale test data) ──────── */
+router.delete('/', ctrl.deleteAllOrders);
+
 module.exports = router;

@@ -106,6 +106,14 @@ exports.deleteOrder = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+/* ── DELETE /orders  (delete ALL orders for this user) ───────────────── */
+exports.deleteAllOrders = async (req, res, next) => {
+  try {
+    const result = await Order.deleteMany({ userId: req.user._id });
+    success(res, { deleted: result.deletedCount }, `Deleted ${result.deletedCount} orders`);
+  } catch (err) { next(err); }
+};
+
 /* ── PATCH /orders/:id ───────────────────────────────────────────────── */
 exports.updateOrder = async (req, res, next) => {
   try {
