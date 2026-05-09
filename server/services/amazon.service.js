@@ -647,13 +647,14 @@ exports.getEligibleShippingServices = async (platform, order) => {
  * Amazon provides the label — we do not generate one ourselves.
  */
 exports.createMFNShipment = async (platform, order, shippingServiceId, settings = {}) => {
-  /* ── Sandbox: generate local label PDF, skip real API call ───────── */
+  /* ── Sandbox: return IDs only — label is generated on-demand in downloadOrderLabel ── */
   if (process.env.AMAZON_SANDBOX === 'true') {
-    const awb         = `AMZL${Date.now()}IN`;
-    const shipmentId  = `SANDBOX-${order.orderId}`;
-    const labelBuffer = await exports.generateSandboxLabelPDF(order, awb);
+    const awb        = `AMZL${Date.now()}IN`;
+    const shipmentId = `SANDBOX-${order.orderId}`;
     logger.info('[amazon sandbox] createMFNShipment → shipment created');
-    return { shipmentId, awb, labelBuffer, labelFormat: 'PDF' };
+    // labelBuffer intentionally null — caller (acceptOrder) discards it anyway.
+    // The label PDF is regenerated fresh in downloadOrderLabel (DPP compliance).
+    return { shipmentId, awb, labelBuffer: null, labelFormat: 'PDF' };
   }
 
   await ensureFreshToken(platform);

@@ -188,15 +188,26 @@ exports.acceptOrder = async (req, res, next) => {
     }
 
     // 1. Get eligible shipping services
-    const services  = await amazonSvc.getEligibleShippingServices(platformDoc, order.toObject());
+    let services;
+    try {
+      services = await amazonSvc.getEligibleShippingServices(platformDoc, order.toObject());
+    } catch (svcErr) {
+      logger.error('[acceptOrder] getEligibleShippingServices failed:', svcErr.message);
+      return next(AppError.badRequest(`Could not get shipping services: ${svcErr.message}`));
+    }
     const serviceId = services[0]?.ShippingServiceId;
     if (!serviceId) {
       return next(AppError.badRequest('No eligible shipping services available for this order'));
     }
 
-    // 2. Create MFN shipment — Amazon returns AWB + label buffer.
-    //    We DISCARD the buffer immediately; only AWB + shipmentId are persisted.
-    const shipment = await amazonSvc.createMFNShipment(platformDoc, order.toObject(), serviceId);
+    // 2. Create MFN shipment — save only AWB + shipmentId (DPP: no label storage)
+    let shipment;
+    try {
+      shipment = await amazonSvc.createMFNShipment(platformDoc, order.toObject(), serviceId);
+    } catch (svcErr) {
+      logger.error('[acceptOrder] createMFNShipment failed:', svcErr.message);
+      return next(AppError.badRequest(`Could not create shipment: ${svcErr.message}`));
+    }
     if (!shipment.awb) {
       return next(AppError.badRequest('Amazon did not return a shipment AWB'));
     }
@@ -207,7 +218,12 @@ exports.acceptOrder = async (req, res, next) => {
     order.shipmentId     = shipment.shipmentId || null;
     order.courierPartner = 'other';
     order.platformStatus = 'Shipped';
-    await order.save();
+    try {
+      await order.save();
+    } catch (saveErr) {
+      logger.error('[acceptOrder] order.save() failed:', saveErr.message);
+      return next(AppError.badRequest(`Failed to save order: ${saveErr.message}`));
+    }
 
     // Log masked AWB only — do not link full AWB to orderId in logs (Amazon DPP)
     const maskedAwb = shipment.awb ? `***${shipment.awb.slice(-4)}` : 'N/A';
