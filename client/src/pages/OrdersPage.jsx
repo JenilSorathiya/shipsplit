@@ -208,12 +208,10 @@ export default function OrdersPage() {
   /* ── Header overflow menu ───────────────────────────────── */
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
 
-  /* ── Bulk accept state ──────────────────────────────────── */
-  const [bulkAccepting,       setBulkAccepting]       = useState(false);
-  const [bulkAcceptProgress,  setBulkAcceptProgress]  = useState({ done: 0, total: 0 });
-
-  /* ── Bulk label download state ──────────────────────────── */
+  /* ── Bulk operation state ───────────────────────────────── */
+  const [bulkAccepting,         setBulkAccepting]         = useState(false);
   const [bulkDownloadingLabels, setBulkDownloadingLabels] = useState(false);
+  const [bulkMarkingShipped,    setBulkMarkingShipped]    = useState(false);
 
   /* ── Reject / cancel state ──────────────────────────────── */
   const [rejectTarget,  setRejectTarget]  = useState(null);  // order object being rejected
@@ -372,48 +370,65 @@ export default function OrdersPage() {
     toast.success(`Deleted ${deleted} order${deleted !== 1 ? 's' : ''}`);
   };
 
-  /* ── Bulk accept all selected pending orders ───────────── */
+  /* ── Bulk accept — all pending selected orders in parallel ─ */
   const handleBulkAccept = async () => {
-    // Only operate on pending orders in the selection
-    const pendingIds = orders
-      .filter((o) => selected.has(o._id) && o.status === 'pending')
-      .map((o) => o._id);
-
-    if (pendingIds.length === 0) {
-      toast.error('No pending orders selected');
-      return;
-    }
+    const pendingOrders = orders.filter((o) => selected.has(o._id) && o.status === 'pending');
+    if (pendingOrders.length === 0) { toast.error('No pending orders selected'); return; }
 
     setBulkAccepting(true);
-    setBulkAcceptProgress({ done: 0, total: pendingIds.length });
 
-    let accepted = 0;
-    let failed   = 0;
+    // Fire all accept calls simultaneously
+    const results = await Promise.allSettled(
+      pendingOrders.map((o) => api.post(`/orders/${o._id}/accept`).then((r) => ({ id: o._id, data: r.data })))
+    );
 
-    for (const id of pendingIds) {
-      try {
-        const { data } = await api.post(`/orders/${id}/accept`);
-        setOrders((prev) =>
-          prev.map((o) =>
-            o._id === id
-              ? { ...o, status: 'label_generated', awb: data?.awb, shipmentId: data?.shipmentId }
-              : o
-          )
-        );
+    // Apply all successful updates to local state in one pass
+    const updates = {};
+    let accepted = 0, failed = 0;
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        updates[r.value.id] = { status: 'label_generated', awb: r.value.data?.awb, shipmentId: r.value.data?.shipmentId };
         accepted++;
-      } catch {
+      } else {
         failed++;
       }
-      setBulkAcceptProgress({ done: accepted + failed, total: pendingIds.length });
     }
-
+    setOrders((prev) => prev.map((o) => (updates[o._id] ? { ...o, ...updates[o._id] } : o)));
     setBulkAccepting(false);
-    setSelected(new Set());
 
     if (failed === 0) {
-      toast.success(`${accepted} order${accepted !== 1 ? 's' : ''} accepted — labels ready to download`);
+      toast.success(`${accepted} order${accepted !== 1 ? 's' : ''} accepted — select them all and click Download Labels`);
     } else {
-      toast.success(`${accepted} accepted, ${failed} failed`);
+      toast(`${accepted} accepted, ${failed} failed`, { icon: '⚠️' });
+    }
+  };
+
+  /* ── Bulk mark shipped — all label_generated selected orders in parallel ─ */
+  const handleBulkMarkShipped = async () => {
+    const labelOrders = orders.filter((o) => selected.has(o._id) && o.status === 'label_generated');
+    if (labelOrders.length === 0) { toast.error('No accepted (label-ready) orders selected'); return; }
+
+    setBulkMarkingShipped(true);
+
+    const results = await Promise.allSettled(
+      labelOrders.map((o) => api.post(`/orders/${o._id}/confirm-shipped`).then(() => o._id))
+    );
+
+    const shippedIds = new Set();
+    let shipped = 0, failed = 0;
+    for (const r of results) {
+      if (r.status === 'fulfilled') { shippedIds.add(r.value); shipped++; }
+      else failed++;
+    }
+    setOrders((prev) =>
+      prev.map((o) => (shippedIds.has(o._id) ? { ...o, status: 'shipped', shippedAt: new Date() } : o))
+    );
+    setBulkMarkingShipped(false);
+
+    if (failed === 0) {
+      toast.success(`${shipped} order${shipped !== 1 ? 's' : ''} marked as Shipped — Amazon notified`);
+    } else {
+      toast(`${shipped} shipped, ${failed} failed`, { icon: '⚠️' });
     }
   };
 
@@ -540,10 +555,10 @@ export default function OrdersPage() {
       <div className="flex items-start gap-3 px-4 py-3 bg-primary-50 border border-primary-100 rounded-xl">
         <CheckCircleIcon className="h-4 w-4 text-primary-500 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-primary-700">
-          <span className="font-semibold">How it works:</span>{' '}
-          <strong>1.</strong> Click <strong>Accept</strong> on a pending order to create the shipment.{' '}
-          <strong>2.</strong> Click <strong>Label</strong> to download and print the shipping label.{' '}
-          <strong>3.</strong> Hand the package to the courier, then click <strong>Mark Shipped</strong> — this notifies Amazon and updates the buyer.
+          <span className="font-semibold">Bulk workflow:</span>{' '}
+          <strong>1.</strong> Select all pending orders → click <strong>Accept All</strong> (all processed simultaneously).{' '}
+          <strong>2.</strong> Select the accepted orders → click <strong>Download Labels</strong> to get all labels in one PDF.{' '}
+          <strong>3.</strong> Print, pack and hand to courier, then click <strong>Mark Shipped</strong> — Amazon is notified instantly.
         </p>
       </div>
 
@@ -593,34 +608,28 @@ export default function OrdersPage() {
             {selected.size} order{selected.size !== 1 ? 's' : ''} selected
           </span>
 
-          {/* Progress indicator while bulk-accepting */}
-          {bulkAccepting && (
-            <span className="flex items-center gap-1.5 text-xs text-primary-700 font-medium">
-              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-              Accepting {bulkAcceptProgress.done}/{bulkAcceptProgress.total}…
-            </span>
-          )}
-
           <div className="flex gap-2 ml-auto flex-wrap">
-            {/* Accept all selected pending orders */}
+
+            {/* Step 1 — Accept all pending */}
             <button
               onClick={handleBulkAccept}
-              disabled={bulkAccepting}
+              disabled={bulkAccepting || bulkDownloadingLabels || bulkMarkingShipped}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
+              title="Accept all selected pending orders at once"
             >
               {bulkAccepting
                 ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                 : <CheckCircleIcon className="h-3.5 w-3.5" />
               }
-              {bulkAccepting ? 'Accepting…' : 'Accept Selected'}
+              {bulkAccepting ? 'Accepting…' : 'Accept All'}
             </button>
 
-            {/* Download labels for all label-ready selected orders */}
+            {/* Step 2 — Download all labels as one PDF */}
             <button
               onClick={handleBulkDownloadLabels}
-              disabled={bulkAccepting || bulkDownloadingLabels}
+              disabled={bulkAccepting || bulkDownloadingLabels || bulkMarkingShipped}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success-600 hover:bg-success-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
-              title="Download labels for all selected label-ready orders as one PDF"
+              title="Download labels for all selected accepted orders as one PDF"
             >
               {bulkDownloadingLabels
                 ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
@@ -629,18 +638,32 @@ export default function OrdersPage() {
               {bulkDownloadingLabels ? 'Downloading…' : 'Download Labels'}
             </button>
 
+            {/* Step 3 — Mark all shipped (notifies Amazon) */}
+            <button
+              onClick={handleBulkMarkShipped}
+              disabled={bulkAccepting || bulkDownloadingLabels || bulkMarkingShipped}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary-300 text-primary-700 hover:bg-primary-100 text-xs font-semibold transition-colors disabled:opacity-60"
+              title="Mark all selected accepted orders as shipped — notifies Amazon"
+            >
+              {bulkMarkingShipped
+                ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                : <CheckCircleIcon className="h-3.5 w-3.5" />
+              }
+              {bulkMarkingShipped ? 'Marking Shipped…' : 'Mark Shipped'}
+            </button>
+
             <button
               onClick={handleDeleteSelected}
-              disabled={bulkAccepting || bulkDownloadingLabels}
+              disabled={bulkAccepting || bulkDownloadingLabels || bulkMarkingShipped}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold transition-colors disabled:opacity-60"
             >
               <TrashIcon className="h-3.5 w-3.5" />
-              Delete Selected
+              Delete
             </button>
 
             <button
               onClick={() => setSelected(new Set())}
-              disabled={bulkAccepting || bulkDownloadingLabels}
+              disabled={bulkAccepting || bulkDownloadingLabels || bulkMarkingShipped}
               className="btn-ghost btn-sm text-gray-500 disabled:opacity-60"
             >
               <XMarkIcon className="h-3.5 w-3.5" />
@@ -751,55 +774,17 @@ export default function OrdersPage() {
                     <td className="table-td">
                       <div className="flex items-center gap-1.5 justify-end">
                         {isAccepting ? (
-                          /* Accept API call in flight */
                           <span className="flex items-center gap-1.5 text-xs text-gray-500 px-2">
                             <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                             Accepting…
                           </span>
                         ) : rejectingId === order._id ? (
-                          /* Reject/cancel API call in flight */
                           <span className="flex items-center gap-1.5 text-xs text-red-500 px-2">
                             <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                             Cancelling…
                           </span>
-                        ) : displayStatus === 'label_generated' ? (
-                          /* Label ready — Download + Mark as Shipped + Cancel */
-                          <>
-                            <button
-                              onClick={() => handleDownloadLabel(order._id, order.orderId)}
-                              disabled={isDownloading || isConfirmingShipped}
-                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-success-50 text-success-700 border border-success-200 hover:bg-success-100 text-xs font-semibold transition-colors disabled:opacity-60"
-                              title="Download shipping label"
-                            >
-                              {isDownloading
-                                ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-                                : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
-                              }
-                              {isDownloading ? 'Downloading…' : 'Label'}
-                            </button>
-                            <button
-                              onClick={() => handleConfirmShipped(order._id)}
-                              disabled={isConfirmingShipped || isDownloading}
-                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
-                              title="Confirm package handed to carrier — notifies Amazon"
-                            >
-                              {isConfirmingShipped
-                                ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-                                : <CheckCircleIcon className="h-3.5 w-3.5" />
-                              }
-                              {isConfirmingShipped ? 'Confirming…' : 'Mark Shipped'}
-                            </button>
-                            <button
-                              onClick={() => setRejectTarget(order)}
-                              disabled={isConfirmingShipped}
-                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
-                              title="Cancel order"
-                            >
-                              <NoSymbolIcon className="h-3.5 w-3.5" />
-                            </button>
-                          </>
                         ) : displayStatus === 'pending' ? (
-                          /* Pending — Accept + Reject side by side */
+                          /* Pending — individual Accept + Reject */
                           <>
                             <button
                               onClick={() => handleAccept(order._id)}
@@ -810,14 +795,35 @@ export default function OrdersPage() {
                             </button>
                             <button
                               onClick={() => setRejectTarget(order)}
-                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold transition-colors"
+                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                              title="Reject order"
                             >
                               <NoSymbolIcon className="h-3.5 w-3.5" />
-                              Reject
+                            </button>
+                          </>
+                        ) : displayStatus === 'label_generated' ? (
+                          /* Label ready — quick download icon + cancel icon; bulk bar is primary */
+                          <>
+                            <button
+                              onClick={() => handleDownloadLabel(order._id, order.orderId)}
+                              disabled={isDownloading}
+                              className="p-1.5 rounded-lg text-success-600 hover:bg-success-50 border border-success-200 transition-colors disabled:opacity-60"
+                              title="Download label"
+                            >
+                              {isDownloading
+                                ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                                : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
+                              }
+                            </button>
+                            <button
+                              onClick={() => setRejectTarget(order)}
+                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                              title="Cancel order"
+                            >
+                              <NoSymbolIcon className="h-3.5 w-3.5" />
                             </button>
                           </>
                         ) : (
-                          /* Shipped / delivered / cancelled / returned — row menu only */
                           <RowMenu onView={() => {}} onDelete={() => {}} />
                         )}
                       </div>
