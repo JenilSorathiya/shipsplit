@@ -204,6 +204,9 @@ export default function OrdersPage() {
   const [acceptingIds,   setAcceptingIds]   = useState(new Set());
   const [downloadingIds, setDownloadingIds] = useState(new Set());
 
+  /* ── Header overflow menu ───────────────────────────────── */
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+
   /* ── Reject / cancel state ──────────────────────────────── */
   const [rejectTarget,  setRejectTarget]  = useState(null);  // order object being rejected
   const [rejectingId,   setRejectingId]   = useState(null);  // orderId in flight
@@ -318,6 +321,7 @@ export default function OrdersPage() {
 
   /* ── Clear all orders ───────────────────────────────────── */
   const handleClearAll = async () => {
+    setHeaderMenuOpen(false);
     if (!window.confirm('Delete ALL orders from your account? This cannot be undone.')) return;
     try {
       const { data } = await api.delete('/orders');
@@ -326,6 +330,22 @@ export default function OrdersPage() {
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to clear orders');
     }
+  };
+
+  /* ── Delete selected orders ─────────────────────────────── */
+  const handleDeleteSelected = async () => {
+    if (!window.confirm(`Delete ${selected.size} selected order${selected.size !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+    const ids = [...selected];
+    let deleted = 0;
+    for (const id of ids) {
+      try {
+        await api.delete(`/orders/${id}`);
+        deleted++;
+      } catch { /* skip errors for individual orders */ }
+    }
+    setOrders((prev) => prev.filter((o) => !selected.has(o._id)));
+    setSelected(new Set());
+    toast.success(`Deleted ${deleted} order${deleted !== 1 ? 's' : ''}`);
   };
 
   /* ── Client-side filter + paginate ─────────────────────── */
@@ -374,14 +394,7 @@ export default function OrdersPage() {
           <h1 className="page-title">Orders</h1>
           <p className="page-sub">Accept orders to auto-generate shipping labels, then download and print.</p>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handleClearAll}
-            className="btn-secondary btn-sm text-red-600 hover:text-red-700 hover:border-red-300"
-          >
-            <TrashIcon className="h-3.5 w-3.5" />
-            Clear All
-          </button>
+        <div className="flex gap-2 items-center">
           <button
             onClick={handleSync}
             disabled={syncing}
@@ -390,6 +403,31 @@ export default function OrdersPage() {
             <ArrowPathIcon className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
             {syncing ? 'Syncing…' : 'Sync'}
           </button>
+
+          {/* ── Overflow menu (danger actions) ─────── */}
+          <div className="relative">
+            <button
+              onClick={() => setHeaderMenuOpen((v) => !v)}
+              className="p-1.5 rounded-lg border border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+              title="More actions"
+            >
+              <EllipsisHorizontalIcon className="h-4 w-4" />
+            </button>
+            {headerMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setHeaderMenuOpen(false)} />
+                <div className="absolute right-0 mt-1 w-44 bg-white rounded-xl shadow-modal border border-gray-100 py-1 z-20">
+                  <button
+                    onClick={handleClearAll}
+                    className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                  >
+                    <TrashIcon className="h-3.5 w-3.5" />
+                    Clear all orders
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -445,9 +483,12 @@ export default function OrdersPage() {
         <div className="flex items-center gap-3 px-4 py-3 bg-primary-50 border border-primary-100 rounded-xl animate-fade-in">
           <span className="text-sm font-semibold text-primary-700">{selected.size} order{selected.size !== 1 ? 's' : ''} selected</span>
           <div className="flex gap-2 ml-auto flex-wrap">
-            <button className="btn-secondary btn-sm">
-              <ArrowDownTrayIcon className="h-3.5 w-3.5" />
-              Export Selected
+            <button
+              onClick={handleDeleteSelected}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold transition-colors"
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+              Delete Selected
             </button>
             <button onClick={() => setSelected(new Set())} className="btn-ghost btn-sm text-gray-500">
               <XMarkIcon className="h-3.5 w-3.5" />
