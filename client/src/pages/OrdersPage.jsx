@@ -256,9 +256,8 @@ export default function OrdersPage() {
     document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
-  /* ── Accept single order → label downloads automatically (Amazon flow) ─ */
+  /* ── Accept single order → status becomes label_generated ── */
   const handleAccept = async (orderId) => {
-    const orderObj = orders.find((o) => o._id === orderId);
     setAcceptingIds((prev) => new Set(prev).add(orderId));
     try {
       const { data } = await api.post(`/orders/${orderId}/accept`);
@@ -269,9 +268,7 @@ export default function OrdersPage() {
             : o
         )
       );
-      // Label is ready the moment Amazon creates the shipment — download immediately
-      await triggerSingleLabel(orderId, orderObj?.orderId);
-      toast.success('Label downloaded — print, pack, hand to courier, then Mark Shipped');
+      toast.success('Order accepted — label ready');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to accept order');
     } finally {
@@ -395,15 +392,9 @@ export default function OrdersPage() {
     }
     setOrders((prev) => prev.map((o) => (updates[o._id] ? { ...o, ...updates[o._id] } : o)));
 
-    // Download all accepted labels as one PDF — same as Amazon giving you all labels on accept
-    if (acceptedIds.length > 0) {
-      try {
-        await triggerBulkLabels(acceptedIds);
-        const msg = failed > 0 ? `, ${failed} failed` : '';
-        toast.success(`${accepted} label${accepted !== 1 ? 's' : ''} downloaded as one PDF${msg} — print, pack, then Mark Shipped`);
-      } catch {
-        toast(`${accepted} accepted${failed ? `, ${failed} failed` : ''} — use Re-download Labels if PDF didn't open`, { icon: '⚠️' });
-      }
+    if (accepted > 0) {
+      const msg = failed > 0 ? `, ${failed} failed` : '';
+      toast.success(`${accepted} order${accepted !== 1 ? 's' : ''} accepted — select them and click Download Labels${msg}`);
     } else {
       toast.error(`All ${failed} orders failed to accept`);
     }
@@ -550,9 +541,9 @@ export default function OrdersPage() {
         <CheckCircleIcon className="h-4 w-4 text-primary-500 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-primary-700">
           <span className="font-semibold">How it works:</span>{' '}
-          <strong>1.</strong> Select all pending orders → <strong>Accept All</strong> — labels PDF downloads automatically.{' '}
-          <strong>2.</strong> Print labels, pack orders, hand to courier.{' '}
-          <strong>3.</strong> Select all accepted orders → <strong>Mark Shipped</strong> — Amazon notified instantly, buyer gets tracking.
+          <strong>1.</strong> Select pending orders → <strong>Accept All</strong>.{' '}
+          <strong>2.</strong> Select accepted orders → <strong>Download Labels</strong> (one PDF for all).{' '}
+          <strong>3.</strong> Print, pack, hand to courier → <strong>Mark Shipped</strong> — Amazon notified, buyer gets tracking.
         </p>
       </div>
 
@@ -623,13 +614,13 @@ export default function OrdersPage() {
               onClick={handleBulkDownloadLabels}
               disabled={bulkAccepting || bulkDownloadingLabels || bulkMarkingShipped}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success-600 hover:bg-success-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
-              title="Re-download labels for selected accepted orders as one PDF (in case PDF didn't open)"
+              title="Download all selected accepted orders' labels as one PDF"
             >
               {bulkDownloadingLabels
                 ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                 : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
               }
-              {bulkDownloadingLabels ? 'Downloading…' : 'Re-download Labels'}
+              {bulkDownloadingLabels ? 'Downloading…' : 'Download Labels'}
             </button>
 
             {/* Step 3 — Mark all shipped (notifies Amazon) */}
@@ -796,8 +787,20 @@ export default function OrdersPage() {
                             </button>
                           </>
                         ) : displayStatus === 'label_generated' ? (
-                          /* Label already downloaded on accept — Mark Shipped + reprint + cancel */
+                          /* Label ready — Download + Mark Shipped + cancel */
                           <>
+                            <button
+                              onClick={() => handleReprintLabel(order._id, order.orderId)}
+                              disabled={isReprinting || isConfirmingShipped}
+                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-success-50 text-success-700 border border-success-200 hover:bg-success-100 text-xs font-semibold transition-colors disabled:opacity-60"
+                              title="Download shipping label"
+                            >
+                              {isReprinting
+                                ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                                : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
+                              }
+                              {isReprinting ? 'Downloading…' : 'Label'}
+                            </button>
                             <button
                               onClick={() => handleConfirmShipped(order._id)}
                               disabled={isConfirmingShipped || isReprinting}
@@ -809,17 +812,6 @@ export default function OrdersPage() {
                                 : <CheckCircleIcon className="h-3.5 w-3.5" />
                               }
                               {isConfirmingShipped ? 'Confirming…' : 'Mark Shipped'}
-                            </button>
-                            <button
-                              onClick={() => handleReprintLabel(order._id, order.orderId)}
-                              disabled={isReprinting || isConfirmingShipped}
-                              className="p-1.5 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 transition-colors disabled:opacity-60"
-                              title="Reprint label"
-                            >
-                              {isReprinting
-                                ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-                                : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
-                              }
                             </button>
                             <button
                               onClick={() => setRejectTarget(order)}
