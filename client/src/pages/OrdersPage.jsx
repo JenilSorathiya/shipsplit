@@ -200,9 +200,9 @@ export default function OrdersPage() {
   const [selected, setSelected] = useState(new Set());
   const [page,     setPage]     = useState(1);
 
-  /* ── Label action state ─────────────────────────────────── */
+  /* ── Per-row action state ───────────────────────────────── */
   const [acceptingIds,        setAcceptingIds]        = useState(new Set());
-  const [downloadingIds,      setDownloadingIds]      = useState(new Set());
+  const [reprintingIds,       setReprintingIds]       = useState(new Set());
   const [confirmShippingIds,  setConfirmShippingIds]  = useState(new Set());
 
   /* ── Header overflow menu ───────────────────────────────── */
@@ -235,12 +235,33 @@ export default function OrdersPage() {
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
-  /* ── Accept order → label immediately ready ────────────── */
+  /* ── Pure helpers — fetch blob and trigger browser download ─────────── */
+  const triggerSingleLabel = async (orderId, orderIdStr) => {
+    const resp = await api.get(`/orders/${orderId}/label`, { responseType: 'blob' });
+    const match = (resp.headers?.['content-disposition'] || '').match(/filename="?([^"]+)"?/);
+    const fname = match?.[1] || `label_${orderIdStr || orderId}.pdf`;
+    const url = URL.createObjectURL(resp.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
+  const triggerBulkLabels = async (orderIds) => {
+    const resp = await api.post('/orders/bulk-label', { orderIds }, { responseType: 'blob' });
+    const url = URL.createObjectURL(resp.data);
+    const a = document.createElement('a');
+    a.href = url; a.download = `labels_bulk_${Date.now()}.pdf`;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
+  /* ── Accept single order → label downloads automatically (Amazon flow) ─ */
   const handleAccept = async (orderId) => {
+    const orderObj = orders.find((o) => o._id === orderId);
     setAcceptingIds((prev) => new Set(prev).add(orderId));
     try {
       const { data } = await api.post(`/orders/${orderId}/accept`);
-      // Server returns { orderId, awb, shipmentId } synchronously — label ready now
       setOrders((prev) =>
         prev.map((o) =>
           o._id === orderId
@@ -248,7 +269,9 @@ export default function OrdersPage() {
             : o
         )
       );
-      toast.success('Order accepted — label ready to download!');
+      // Label is ready the moment Amazon creates the shipment — download immediately
+      await triggerSingleLabel(orderId, orderObj?.orderId);
+      toast.success('Label downloaded — print, pack, hand to courier, then Mark Shipped');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to accept order');
     } finally {
@@ -256,38 +279,15 @@ export default function OrdersPage() {
     }
   };
 
-  /* ── Download label — fetches fresh from server (never cached) ─────── */
-  const handleDownloadLabel = async (orderId, orderIdStr) => {
-    setDownloadingIds((prev) => new Set(prev).add(orderId));
+  /* ── Reprint label — for cases where printer failed or label was lost ── */
+  const handleReprintLabel = async (orderId, orderIdStr) => {
+    setReprintingIds((prev) => new Set(prev).add(orderId));
     try {
-      // GET /orders/:id/label — server streams PDF directly, no disk storage
-      const resp = await api.get(`/orders/${orderId}/label`, { responseType: 'blob' });
-      const disposition = resp.headers?.['content-disposition'] || '';
-      const match       = disposition.match(/filename="?([^"]+)"?/);
-      const fname       = match?.[1] || `label_${orderIdStr || orderId}.pdf`;
-
-      const url = URL.createObjectURL(resp.data);
-      const a   = document.createElement('a');
-      a.href     = url;
-      a.download = fname;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success('Label downloaded!');
-    } catch (err) {
-      let message = err.message || 'Download failed';
-      if (err.response?.data instanceof Blob) {
-        try {
-          const text = await err.response.data.text();
-          message = JSON.parse(text).message || message;
-        } catch { /* not JSON */ }
-      } else if (err.response?.data?.message) {
-        message = err.response.data.message;
-      }
-      toast.error(message);
+      await triggerSingleLabel(orderId, orderIdStr);
+    } catch {
+      toast.error('Could not reprint label — try again');
     } finally {
-      setDownloadingIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
+      setReprintingIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
     }
   };
 
@@ -370,37 +370,45 @@ export default function OrdersPage() {
     toast.success(`Deleted ${deleted} order${deleted !== 1 ? 's' : ''}`);
   };
 
-  /* ── Bulk accept — all pending selected orders in parallel ─ */
+  /* ── Bulk accept — all pending in parallel, labels auto-download as one PDF ─ */
   const handleBulkAccept = async () => {
     const pendingOrders = orders.filter((o) => selected.has(o._id) && o.status === 'pending');
     if (pendingOrders.length === 0) { toast.error('No pending orders selected'); return; }
 
     setBulkAccepting(true);
 
-    // Fire all accept calls simultaneously
     const results = await Promise.allSettled(
       pendingOrders.map((o) => api.post(`/orders/${o._id}/accept`).then((r) => ({ id: o._id, data: r.data })))
     );
 
-    // Apply all successful updates to local state in one pass
     const updates = {};
+    const acceptedIds = [];
     let accepted = 0, failed = 0;
     for (const r of results) {
       if (r.status === 'fulfilled') {
         updates[r.value.id] = { status: 'label_generated', awb: r.value.data?.awb, shipmentId: r.value.data?.shipmentId };
+        acceptedIds.push(r.value.id);
         accepted++;
       } else {
         failed++;
       }
     }
     setOrders((prev) => prev.map((o) => (updates[o._id] ? { ...o, ...updates[o._id] } : o)));
-    setBulkAccepting(false);
 
-    if (failed === 0) {
-      toast.success(`${accepted} order${accepted !== 1 ? 's' : ''} accepted — select them all and click Download Labels`);
+    // Download all accepted labels as one PDF — same as Amazon giving you all labels on accept
+    if (acceptedIds.length > 0) {
+      try {
+        await triggerBulkLabels(acceptedIds);
+        const msg = failed > 0 ? `, ${failed} failed` : '';
+        toast.success(`${accepted} label${accepted !== 1 ? 's' : ''} downloaded as one PDF${msg} — print, pack, then Mark Shipped`);
+      } catch {
+        toast(`${accepted} accepted${failed ? `, ${failed} failed` : ''} — use Re-download Labels if PDF didn't open`, { icon: '⚠️' });
+      }
     } else {
-      toast(`${accepted} accepted, ${failed} failed`, { icon: '⚠️' });
+      toast.error(`All ${failed} orders failed to accept`);
     }
+
+    setBulkAccepting(false);
   };
 
   /* ── Bulk mark shipped — all label_generated selected orders in parallel ─ */
@@ -432,37 +440,23 @@ export default function OrdersPage() {
     }
   };
 
-  /* ── Bulk label download — merges all selected label-ready orders into one PDF ── */
+  /* ── Re-download labels — in case PDF didn't open or needs reprinting ── */
   const handleBulkDownloadLabels = async () => {
     const labelReadyIds = orders
       .filter((o) => selected.has(o._id) && ['label_generated', 'shipped', 'delivered'].includes(o.status))
       .map((o) => o._id);
 
     if (labelReadyIds.length === 0) {
-      toast.error('No label-ready orders selected — accept orders first');
+      toast.error('Select accepted orders to re-download their labels');
       return;
     }
 
     setBulkDownloadingLabels(true);
     try {
-      const resp = await api.post('/orders/bulk-label', { orderIds: labelReadyIds }, { responseType: 'blob' });
-      const url  = URL.createObjectURL(resp.data);
-      const a    = document.createElement('a');
-      a.href     = url;
-      a.download = `labels_bulk_${Date.now()}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success(`Downloaded ${labelReadyIds.length} label${labelReadyIds.length !== 1 ? 's' : ''} as one PDF`);
-    } catch (err) {
-      let message = 'Bulk label download failed';
-      if (err.response?.data instanceof Blob) {
-        try { message = JSON.parse(await err.response.data.text()).message || message; } catch { /* not JSON */ }
-      } else if (err.response?.data?.message) {
-        message = err.response.data.message;
-      }
-      toast.error(message);
+      await triggerBulkLabels(labelReadyIds);
+      toast.success(`${labelReadyIds.length} label${labelReadyIds.length !== 1 ? 's' : ''} re-downloaded as one PDF`);
+    } catch {
+      toast.error('Re-download failed — try again');
     } finally {
       setBulkDownloadingLabels(false);
     }
@@ -555,10 +549,10 @@ export default function OrdersPage() {
       <div className="flex items-start gap-3 px-4 py-3 bg-primary-50 border border-primary-100 rounded-xl">
         <CheckCircleIcon className="h-4 w-4 text-primary-500 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-primary-700">
-          <span className="font-semibold">Bulk workflow:</span>{' '}
-          <strong>1.</strong> Select all pending orders → click <strong>Accept All</strong> (all processed simultaneously).{' '}
-          <strong>2.</strong> Select the accepted orders → click <strong>Download Labels</strong> to get all labels in one PDF.{' '}
-          <strong>3.</strong> Print, pack and hand to courier, then click <strong>Mark Shipped</strong> — Amazon is notified instantly.
+          <span className="font-semibold">How it works:</span>{' '}
+          <strong>1.</strong> Select all pending orders → <strong>Accept All</strong> — labels PDF downloads automatically.{' '}
+          <strong>2.</strong> Print labels, pack orders, hand to courier.{' '}
+          <strong>3.</strong> Select all accepted orders → <strong>Mark Shipped</strong> — Amazon notified instantly, buyer gets tracking.
         </p>
       </div>
 
@@ -629,13 +623,13 @@ export default function OrdersPage() {
               onClick={handleBulkDownloadLabels}
               disabled={bulkAccepting || bulkDownloadingLabels || bulkMarkingShipped}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-success-600 hover:bg-success-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
-              title="Download labels for all selected accepted orders as one PDF"
+              title="Re-download labels for selected accepted orders as one PDF (in case PDF didn't open)"
             >
               {bulkDownloadingLabels
                 ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                 : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
               }
-              {bulkDownloadingLabels ? 'Downloading…' : 'Download Labels'}
+              {bulkDownloadingLabels ? 'Downloading…' : 'Re-download Labels'}
             </button>
 
             {/* Step 3 — Mark all shipped (notifies Amazon) */}
@@ -734,7 +728,7 @@ export default function OrdersPage() {
                 const displaySku          = order.sku || order.items?.[0]?.sku || '—';
                 const displayStatus       = order.status || 'pending';
                 const isAccepting         = acceptingIds.has(order._id);
-                const isDownloading       = downloadingIds.has(order._id);
+                const isReprinting        = reprintingIds.has(order._id);
                 const isConfirmingShipped = confirmShippingIds.has(order._id);
 
                 return (
@@ -802,22 +796,35 @@ export default function OrdersPage() {
                             </button>
                           </>
                         ) : displayStatus === 'label_generated' ? (
-                          /* Label ready — quick download icon + cancel icon; bulk bar is primary */
+                          /* Label already downloaded on accept — Mark Shipped + reprint + cancel */
                           <>
                             <button
-                              onClick={() => handleDownloadLabel(order._id, order.orderId)}
-                              disabled={isDownloading}
-                              className="p-1.5 rounded-lg text-success-600 hover:bg-success-50 border border-success-200 transition-colors disabled:opacity-60"
-                              title="Download label"
+                              onClick={() => handleConfirmShipped(order._id)}
+                              disabled={isConfirmingShipped || isReprinting}
+                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
+                              title="Confirm package handed to carrier — notifies Amazon"
                             >
-                              {isDownloading
+                              {isConfirmingShipped
+                                ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
+                                : <CheckCircleIcon className="h-3.5 w-3.5" />
+                              }
+                              {isConfirmingShipped ? 'Confirming…' : 'Mark Shipped'}
+                            </button>
+                            <button
+                              onClick={() => handleReprintLabel(order._id, order.orderId)}
+                              disabled={isReprinting || isConfirmingShipped}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-primary-600 hover:bg-primary-50 transition-colors disabled:opacity-60"
+                              title="Reprint label"
+                            >
+                              {isReprinting
                                 ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                                 : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
                               }
                             </button>
                             <button
                               onClick={() => setRejectTarget(order)}
-                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                              disabled={isConfirmingShipped}
+                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
                               title="Cancel order"
                             >
                               <NoSymbolIcon className="h-3.5 w-3.5" />
