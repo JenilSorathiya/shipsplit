@@ -18,6 +18,7 @@ const addressSchema = new mongoose.Schema({
 }, { _id: false });
 
 const itemSchema = new mongoose.Schema({
+  orderItemId: String,           // Amazon OrderItemId — required for confirmShipment
   sku:         String,
   msku:        String,           // merchant/custom SKU
   name:        String,

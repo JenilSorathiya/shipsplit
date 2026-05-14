@@ -813,12 +813,21 @@ exports.confirmShipment = async (platform, amazonOrderId, items, awb, carrierCod
 
   await ensureFreshToken(platform);
 
-  const carrier     = CARRIER_CODE_MAP[carrierCode?.toLowerCase()] || 'Other';
-  const date        = (shipDate || new Date()).toISOString();
-  const orderItems  = (items || []).map((i) => ({
-    orderItemId: i.orderItemId || i._id?.toString(),
-    quantity:    i.quantity    || 1,
-  })).filter((i) => i.orderItemId);
+  const carrier    = CARRIER_CODE_MAP[carrierCode?.toLowerCase()] || 'Other';
+  const date       = (shipDate || new Date()).toISOString();
+  const orderItems = (items || [])
+    .map((i) => ({ orderItemId: i.orderItemId, quantity: i.quantity || 1 }))
+    .filter((i) => i.orderItemId && i.orderItemId !== '');
+
+  // orderItems is required by Amazon — every item must have a real OrderItemId.
+  // If missing it means the order was CSV-imported (no SP-API sync yet).
+  // Caller should re-sync the order before confirming shipment.
+  if (orderItems.length === 0) {
+    throw new Error(
+      'Cannot confirm shipment: order items are missing Amazon OrderItemId. ' +
+      'Please sync this order from Amazon first, then try again.'
+    );
+  }
 
   const body = {
     packageDetail: {
@@ -828,7 +837,7 @@ exports.confirmShipment = async (platform, amazonOrderId, items, awb, carrierCod
       shippingMethod:     'Standard',
       trackingNumber:     awb,
       shipDate:           date,
-      orderItems:         orderItems.length ? orderItems : [{ orderItemId: '1', quantity: 1 }],
+      orderItems,
     },
     marketplaceId: process.env.AMAZON_MARKETPLACE_ID || IN_MARKETPLACE,
   };
@@ -868,11 +877,13 @@ exports.normalizeOrder = function normalizeOrder(raw, items = []) {
     || buyerInfo.GiftMessageText || '';
 
   // Map SP-API items to our item schema
+  // orderItemId is critical — saved here so confirmShipment can use it later
   const normalizedItems = items.map((item) => ({
-    sku:         item.SellerSKU || '',
-    msku:        item.SellerSKU || '',  // SellerSKU IS the MSKU on Amazon
-    name:        item.Title     || '',
-    asin:        item.ASIN      || '',
+    orderItemId: item.OrderItemId || '',   // required for POST /orders/v0/orders/{id}/shipment
+    sku:         item.SellerSKU   || '',
+    msku:        item.SellerSKU   || '',   // SellerSKU IS the MSKU on Amazon
+    name:        item.Title       || '',
+    asin:        item.ASIN        || '',
     quantity:    Number(item.QuantityOrdered) || 1,
     price:       parseFloat(item.ItemPrice?.Amount || 0),
     isGift:      item.IsGift === 'true' || item.IsGift === true,

@@ -4,10 +4,16 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // ── Required env var check ────────────────────────────────────────────
-const REQUIRED = ['MONGODB_URI', 'JWT_SECRET'];
+const REQUIRED = ['MONGODB_URI', 'JWT_SECRET', 'ENCRYPT_KEY'];
 const missing  = REQUIRED.filter(k => !process.env[k]);
 if (missing.length) {
   console.error('FATAL: Missing required environment variables:', missing.join(', '));
+  process.exit(1);
+}
+// ENCRYPT_KEY must be at least 32 characters (AES-256 requires 32-byte key)
+if (process.env.ENCRYPT_KEY.length < 32) {
+  console.error('FATAL: ENCRYPT_KEY must be at least 32 characters long.');
+  console.error('Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
   process.exit(1);
 }
 // JWT_REFRESH_SECRET falls back to JWT_SECRET if not set

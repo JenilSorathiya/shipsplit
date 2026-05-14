@@ -5,20 +5,28 @@ const validate = require('../middleware/validate.middleware');
 const { uploadLimiter } = require('../middleware/rateLimiter.middleware');
 const { uploadCSV } = require('../middleware/upload.middleware');
 const v        = require('../validations/orders.validation');
+const {
+  requireActivePlan,
+  checkOrderLimit,
+  checkPlatformAccess,
+} = require('../middleware/planLimits.middleware');
 
 router.use(authenticate);
 
 router.get('/',       validate(v.getOrders, 'query'), ctrl.getOrders);
-router.get('/:id',                                    ctrl.getOrder);
-router.get('/:id/label',                              ctrl.downloadOrderLabel);
-router.post('/:id/accept',                            ctrl.acceptOrder);
-router.post('/:id/confirm-shipped',                   ctrl.confirmOrderShipped);
-router.post('/:id/reject',                            ctrl.rejectOrder);
-router.patch('/:id',  validate(v.updateOrder),        ctrl.updateOrder);
-router.delete('/:id',                                 ctrl.deleteOrder);
+router.post('/bulk-label',  requireActivePlan,                        ctrl.bulkDownloadLabels);
+router.get('/:id',                                                     ctrl.getOrder);
+router.get('/:id/label',    requireActivePlan,                        ctrl.downloadOrderLabel);
+router.post('/:id/accept',  requireActivePlan,                        ctrl.acceptOrder);
+router.post('/:id/confirm-shipped',                                    ctrl.confirmOrderShipped);
+router.post('/:id/reject',                                             ctrl.rejectOrder);
+router.patch('/:id',        validate(v.updateOrder),                  ctrl.updateOrder);
+router.delete('/:id',                                                  ctrl.deleteOrder);
 
 /* ── CSV import ──────────────────────────────────────────────────────── */
 router.post('/upload',
+  requireActivePlan,
+  checkOrderLimit,
   uploadLimiter,
   uploadCSV.single('file'),
   validate(v.uploadOrders),
@@ -29,8 +37,8 @@ router.post('/upload',
 router.post('/bulk-assign-courier', validate(v.bulkAssignCourier), ctrl.bulkAssignCourier);
 router.post('/:id/assign-courier',  validate(v.assignCourier),     ctrl.assignCourier);
 
-/* ── Platform sync ───────────────────────────────────────────────────── */
-router.post('/sync', ctrl.syncOrders);
+/* ── Platform sync — requires active plan + platform in plan ─────────── */
+router.post('/sync', requireActivePlan, checkPlatformAccess, checkOrderLimit, ctrl.syncOrders);
 
 /* ── Delete all orders for this user (clears stale test data) ──────── */
 router.delete('/', ctrl.deleteAllOrders);

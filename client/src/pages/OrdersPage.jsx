@@ -217,14 +217,28 @@ export default function OrdersPage() {
   const [rejectTarget,  setRejectTarget]  = useState(null);  // order object being rejected
   const [rejectingId,   setRejectingId]   = useState(null);  // orderId in flight
 
-  /* ── Fetch orders ───────────────────────────────────────── */
+  /* ── Fetch orders — paginate through all pages (server max 100/page) ── */
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get('/orders', {
-        params: { page: 1, limit: 100, sortBy: 'createdAt', sortOrder: 'desc' },
-      });
-      setOrders(Array.isArray(data) ? data : []);
+      let allOrders = [];
+      let currentPage = 1;
+      const limit = 100;
+
+      while (true) {
+        const resp = await api.get('/orders', {
+          params: { page: currentPage, limit, sortBy: 'createdAt', sortOrder: 'desc' },
+        });
+        const batch = Array.isArray(resp.data) ? resp.data : [];
+        allOrders = allOrders.concat(batch);
+
+        // Stop when we get a partial page (last page) or meta total is reached
+        const total = resp.meta?.total ?? resp.meta?.count ?? null;
+        if (batch.length < limit || (total !== null && allOrders.length >= total)) break;
+        currentPage++;
+      }
+
+      setOrders(allOrders);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to load orders');
       setOrders([]);

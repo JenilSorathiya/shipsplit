@@ -296,6 +296,97 @@ exports.downloadOrderLabel = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+/* ── POST /orders/bulk-label  (merge multiple labels into one PDF) ───────
+   Accepts { orderIds: [...] } — fetches each label (sandbox: generated;
+   production: fetched from Amazon) and merges all pages into one PDF using
+   pdf-lib.  Streams the combined file directly (Cache-Control: no-store).
+   Amazon DPP: nothing is written to disk at any point.
+───────────────────────────────────────────────────────────────────────── */
+exports.bulkDownloadLabels = async (req, res, next) => {
+  try {
+    const { orderIds } = req.body;
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return next(AppError.badRequest('orderIds array is required'));
+    }
+    if (orderIds.length > 50) {
+      return next(AppError.badRequest('Maximum 50 labels per bulk download'));
+    }
+
+    // Fetch only orders that belong to this user and have a label ready
+    const orders = await Order.find({
+      _id:    { $in: orderIds },
+      userId: req.user._id,
+      status: { $in: ['label_generated', 'shipped', 'delivered'] },
+    });
+
+    if (orders.length === 0) {
+      return next(AppError.badRequest('No label-ready orders found in the selection'));
+    }
+
+    const isSandbox = process.env.AMAZON_SANDBOX === 'true';
+    const amazonSvc = require('../services/amazon.service');
+
+    // Production: load platform doc once for all orders
+    let platformDoc = null;
+    if (!isSandbox) {
+      platformDoc = await Platform
+        .findOne({ userId: req.user._id, platformName: 'amazon', isConnected: true })
+        .select('+_accessToken +_refreshToken');
+      if (!platformDoc) {
+        return next(AppError.badRequest('Amazon account is not connected'));
+      }
+    }
+
+    // Fetch each label PDF buffer
+    const { PDFDocument } = require('pdf-lib');
+    const merged = await PDFDocument.create();
+    let successCount = 0;
+
+    for (const order of orders) {
+      try {
+        let pdfBuffer;
+        if (isSandbox) {
+          pdfBuffer = await amazonSvc.generateSandboxLabelPDF(
+            order.toObject(),
+            order.awb || `AMZL${order._id}IN`
+          );
+        } else {
+          if (!order.shipmentId) continue; // skip if no shipment yet
+          const result = await amazonSvc.fetchShippingLabel(platformDoc, order.shipmentId);
+          pdfBuffer = result.buffer;
+        }
+        if (!pdfBuffer) continue;
+
+        // Copy all pages from this label into the merged doc
+        const labelDoc = await PDFDocument.load(pdfBuffer);
+        const pages    = await merged.copyPages(labelDoc, labelDoc.getPageIndices());
+        pages.forEach((p) => merged.addPage(p));
+        successCount++;
+      } catch (labelErr) {
+        logger.warn(`[bulkDownloadLabels] skipped order ${order.orderId}: ${labelErr.message}`);
+        // skip individual failures — still return the rest
+      }
+    }
+
+    if (successCount === 0) {
+      return next(AppError.badRequest('Could not generate any labels for the selected orders'));
+    }
+
+    const mergedBuffer = Buffer.from(await merged.save());
+
+    // Stream directly — never saved to disk (Amazon DPP compliance)
+    res.set({
+      'Content-Type':        'application/pdf',
+      'Content-Disposition': `attachment; filename="labels_bulk_${Date.now()}.pdf"`,
+      'Content-Length':      mergedBuffer.length,
+      'Cache-Control':       'no-store, no-cache, must-revalidate',
+      'Pragma':              'no-cache',
+    });
+    res.send(mergedBuffer);
+    logger.info(`[bulkDownloadLabels] merged ${successCount} labels`);
+  } catch (err) { next(err); }
+};
+
 /* ── POST /orders/:id/confirm-shipped ────────────────────────────────────
    Final mandatory step of the Amazon MFN workflow.
    Tells Amazon the package has been handed to the carrier:
@@ -329,11 +420,40 @@ exports.confirmOrderShipped = async (req, res, next) => {
         return next(AppError.badRequest('Amazon account is not connected'));
       }
 
+      // If items are missing orderItemId (e.g. CSV-imported orders), fetch fresh from Amazon
+      let itemsForConfirm = order.items || [];
+      const needsItemFetch = itemsForConfirm.length === 0 ||
+        itemsForConfirm.every((i) => !i.orderItemId);
+
+      if (needsItemFetch) {
+        try {
+          const rawItems = await amazonSvc.fetchOrderItems(platformDoc, order.orderId);
+          if (rawItems?.length) {
+            // Normalize to our schema (preserving orderItemId)
+            const normalized = rawItems.map((i) => ({
+              orderItemId: i.OrderItemId || '',
+              sku:         i.SellerSKU   || '',
+              msku:        i.SellerSKU   || '',
+              name:        i.Title       || '',
+              asin:        i.ASIN        || '',
+              quantity:    Number(i.QuantityOrdered) || 1,
+              price:       parseFloat(i.ItemPrice?.Amount || 0),
+              isGift:      i.IsGift === 'true' || i.IsGift === true,
+            }));
+            order.items = normalized;
+            await order.save();
+            itemsForConfirm = normalized;
+          }
+        } catch (fetchErr) {
+          logger.warn('[confirmOrderShipped] Could not fetch order items:', fetchErr.message);
+        }
+      }
+
       try {
         await amazonSvc.confirmShipment(
           platformDoc,
           order.orderId,
-          order.items || [],
+          itemsForConfirm,
           order.awb,
           order.courierPartner || 'other',
           new Date()
