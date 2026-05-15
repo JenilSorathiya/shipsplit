@@ -32,7 +32,7 @@ const TABS = [
     icon:     ArchiveBoxIcon,
     statuses: ['processing', 'label_generated'],
     color:    'blue',
-    tip:      'Orders accepted and label is ready. Download label, print it, pack the item.',
+    tip:      'Orders accepted and label is ready. Download label, print it, pack the item, and hand to courier. Status updates automatically.',
   },
   {
     key:      'shipped',
@@ -216,14 +216,12 @@ export default function OrdersPage() {
   const [selected,  setSelected]  = useState(new Set());
   const [page,      setPage]      = useState(1);
 
-  const [acceptingIds,       setAcceptingIds]       = useState(new Set());
-  const [reprintingIds,      setReprintingIds]       = useState(new Set());
-  const [confirmShippingIds, setConfirmShippingIds]  = useState(new Set());
+  const [acceptingIds,  setAcceptingIds]  = useState(new Set());
+  const [reprintingIds, setReprintingIds] = useState(new Set());
 
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
-  const [bulkAccepting,          setBulkAccepting]          = useState(false);
-  const [bulkDownloadingLabels,  setBulkDownloadingLabels]  = useState(false);
-  const [bulkMarkingShipped,     setBulkMarkingShipped]     = useState(false);
+  const [bulkAccepting,         setBulkAccepting]         = useState(false);
+  const [bulkDownloadingLabels, setBulkDownloadingLabels] = useState(false);
 
   const [rejectTarget, setRejectTarget] = useState(null);
   const [rejectingId,  setRejectingId]  = useState(null);
@@ -337,19 +335,6 @@ export default function OrdersPage() {
     }
   };
 
-  const handleConfirmShipped = async (orderId) => {
-    setConfirmShippingIds((p) => new Set(p).add(orderId));
-    try {
-      await api.post(`/orders/${orderId}/confirm-shipped`);
-      setOrders((p) => p.map((o) => o._id === orderId ? { ...o, status: 'shipped', shippedAt: new Date() } : o));
-      toast.success('Marketplace notified — order moved to Shipped!');
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to confirm shipment');
-    } finally {
-      setConfirmShippingIds((p) => { const s = new Set(p); s.delete(orderId); return s; });
-    }
-  };
-
   const handleRejectOrder = async (reason, reasonText) => {
     if (!rejectTarget) return;
     const orderId = rejectTarget._id;
@@ -439,24 +424,7 @@ export default function OrdersPage() {
     }
   };
 
-  const handleBulkMarkShipped = async () => {
-    const targets = orders.filter((o) => selected.has(o._id) && ['label_generated', 'processing'].includes(o.status));
-    if (!targets.length) { toast.error('Select accepted orders to mark as shipped'); return; }
-    setBulkMarkingShipped(true);
-    const results = await Promise.allSettled(
-      targets.map((o) => api.post(`/orders/${o._id}/confirm-shipped`).then(() => o._id))
-    );
-    const shippedIds = new Set(); let shipped = 0, failed = 0;
-    for (const r of results) {
-      if (r.status === 'fulfilled') { shippedIds.add(r.value); shipped++; } else { failed++; }
-    }
-    setOrders((p) => p.map((o) => shippedIds.has(o._id) ? { ...o, status: 'shipped', shippedAt: new Date() } : o));
-    setBulkMarkingShipped(false);
-    if (failed === 0) toast.success(`${shipped} order${shipped !== 1 ? 's' : ''} marked Shipped — marketplace notified`);
-    else toast(`${shipped} shipped, ${failed} failed`, { icon: '⚠️' });
-  };
-
-  const isBusy = bulkAccepting || bulkDownloadingLabels || bulkMarkingShipped;
+  const isBusy = bulkAccepting || bulkDownloadingLabels;
 
   /* ── Render ──────────────────────────────────────────────────────── */
   return (
@@ -598,22 +566,13 @@ export default function OrdersPage() {
 
               {/* Accepted tab bulk actions */}
               {activeTab === 'accepted' && (
-                <>
-                  <button
+                <button
                     onClick={handleBulkDownloadLabels} disabled={isBusy}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
                   >
                     {bulkDownloadingLabels ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : <ArrowDownTrayIcon className="h-3.5 w-3.5" />}
                     {bulkDownloadingLabels ? 'Downloading…' : 'Download Labels'}
                   </button>
-                  <button
-                    onClick={handleBulkMarkShipped} disabled={isBusy}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
-                  >
-                    {bulkMarkingShipped ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> : <TruckIcon className="h-3.5 w-3.5" />}
-                    {bulkMarkingShipped ? 'Marking Shipped…' : 'Mark All Shipped'}
-                  </button>
-                </>
               )}
 
               <button
@@ -685,9 +644,8 @@ export default function OrdersPage() {
                 const displayProduct      = order.productName || order.items?.[0]?.name || '—';
                 const displaySku          = order.sku || order.items?.[0]?.sku || '—';
                 const displayStatus       = order.status || 'pending';
-                const isAccepting         = acceptingIds.has(order._id);
-                const isReprinting        = reprintingIds.has(order._id);
-                const isConfirmingShipped = confirmShippingIds.has(order._id);
+                const isAccepting  = acceptingIds.has(order._id);
+                const isReprinting = reprintingIds.has(order._id);
 
                 return (
                   <tr key={order._id} className={isSel ? 'table-row-selected' : 'table-row'}>
@@ -751,11 +709,7 @@ export default function OrdersPage() {
 
                         {/* ACCEPTED tab — Download Label + Mark Shipped + Cancel */}
                         {activeTab === 'accepted' && (
-                          isConfirmingShipped ? (
-                            <span className="flex items-center gap-1.5 text-xs text-gray-500 px-2">
-                              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> Marking…
-                            </span>
-                          ) : rejectingId === order._id ? (
+                          rejectingId === order._id ? (
                             <span className="flex items-center gap-1.5 text-xs text-red-500 px-2">
                               <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" /> Cancelling…
                             </span>
@@ -771,15 +725,7 @@ export default function OrdersPage() {
                                   ? <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
                                   : <ArrowDownTrayIcon className="h-3.5 w-3.5" />
                                 }
-                                {isReprinting ? 'Downloading…' : 'Label'}
-                              </button>
-                              <button
-                                onClick={() => handleConfirmShipped(order._id)}
-                                disabled={isReprinting}
-                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors shadow-sm disabled:opacity-60"
-                                title="Mark as shipped — notifies marketplace"
-                              >
-                                <TruckIcon className="h-3.5 w-3.5" /> Mark Shipped
+                                {isReprinting ? 'Downloading…' : 'Download Label'}
                               </button>
                               <button
                                 onClick={() => setRejectTarget(order)}
