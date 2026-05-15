@@ -188,23 +188,22 @@ export default function ReportsPage() {
         />
         <SumCard
           label="Labels Printed"
-          value={summary?.labelsGenerated?.toLocaleString('en-IN')}
+          value={summary?.labelsPrinted?.toLocaleString('en-IN')}
           loading={loading}
           icon={TagIcon}
           color="bg-success-50 text-success-600"
         />
         <SumCard
           label="Return Rate"
-          value={summary?.returnRate != null ? `${summary.returnRate.toFixed(1)}%` : null}
-          sub={summary?.totalReturns ? `${summary.totalReturns} returns` : undefined}
+          value={summary?.returnRate != null ? `${summary.returnRate}%` : null}
           loading={loading}
           icon={ArrowPathIcon}
           color="bg-warning-50 text-warning-600"
         />
         <SumCard
-          label="Avg. Delivery"
-          value={summary?.avgDeliveryDays != null ? `${summary.avgDeliveryDays} days` : null}
-          sub="Across all couriers"
+          label="Daily Avg"
+          value={summary?.avgDailyOrders != null ? `${summary.avgDailyOrders} orders` : null}
+          sub="Orders per day"
           loading={loading}
           icon={TruckIcon}
           color="bg-purple-50 text-purple-600"
@@ -337,14 +336,17 @@ export default function ReportsPage() {
               {loading ? <SkeletonRows cols={7} /> : courierData.length === 0 ? (
                 <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-gray-400">No courier data for this period</td></tr>
               ) : courierData.map((row) => {
-                const rate = row.deliveryRate ?? (row.delivered && row.shipments ? Math.round((row.delivered / row.shipments) * 100) : 0);
+                const shipments = row.total ?? row.shipments ?? 0;
+                const delivered = row.delivered ?? 0;
+                const returns   = row.returned ?? row.returns ?? 0;
+                const rate = shipments > 0 ? Math.round((delivered / shipments) * 100) : 0;
                 const barColor = rate >= 95 ? '#16a34a' : rate >= 92 ? '#2563eb' : '#ea580c';
                 return (
                   <tr key={row.courier ?? row._id} className="table-row">
                     <td className="table-td"><span className="font-semibold text-gray-900">{row.courier ?? row._id}</span></td>
-                    <td className="table-td tabular-nums">{(row.shipments ?? 0).toLocaleString('en-IN')}</td>
-                    <td className="table-td tabular-nums text-success-700 font-medium">{(row.delivered ?? 0).toLocaleString('en-IN')}</td>
-                    <td className="table-td tabular-nums text-red-600">{row.returns ?? 0}</td>
+                    <td className="table-td tabular-nums">{shipments.toLocaleString('en-IN')}</td>
+                    <td className="table-td tabular-nums text-success-700 font-medium">{delivered.toLocaleString('en-IN')}</td>
+                    <td className="table-td tabular-nums text-red-600">{returns}</td>
                     <td className="table-td">
                       <span className={`font-semibold ${rate >= 95 ? 'text-success-700' : rate >= 92 ? 'text-primary-700' : 'text-warning-700'}`}>
                         {rate}%
@@ -400,17 +402,17 @@ export default function ReportsPage() {
                   <td className="table-td text-xs font-bold text-gray-400">#{i + 1}</td>
                   <td className="table-td font-mono text-xs font-semibold text-gray-800">{row.sku ?? '—'}</td>
                   <td className="table-td text-xs text-gray-700 max-w-[180px]">
-                    <span className="truncate block">{row.product ?? row.name ?? '—'}</span>
+                    <span className="truncate block">{row.productName ?? row.product ?? row.name ?? '—'}</span>
                   </td>
                   <td className="table-td">
-                    {row.platform ? (
-                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-md capitalize ${PLATFORM_STYLE[row.platform] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {row.platform}
+                    {(row.platforms?.[0] ?? row.platform) ? (
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-md capitalize ${PLATFORM_STYLE[row.platforms?.[0] ?? row.platform] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {row.platforms?.[0] ?? row.platform}
                       </span>
                     ) : '—'}
                   </td>
                   <td className="table-td font-semibold tabular-nums">{(row.orders ?? row.count ?? 0).toLocaleString('en-IN')}</td>
-                  <td className="table-td tabular-nums text-red-600 text-xs">{row.returns ?? 0}</td>
+                  <td className="table-td tabular-nums text-red-600 text-xs">{row.returns ?? row.returned ?? 0}</td>
                   <td className="table-td font-semibold text-success-700">
                     {row.revenue != null ? `₹${Number(row.revenue).toLocaleString('en-IN')}` : '—'}
                   </td>
