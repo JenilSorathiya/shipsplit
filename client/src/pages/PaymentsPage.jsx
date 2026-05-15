@@ -290,7 +290,7 @@ export default function PaymentsPage() {
         <HeroCard
           label="Today"
           sublabel="Expected today"
-          amount={stats?.today}
+          amount={stats?.today?.amount}
           loading={statsLoading}
           icon={CheckCircleIcon}
           colorClasses="bg-gradient-to-br from-green-500 to-emerald-600 text-white"
@@ -298,7 +298,7 @@ export default function PaymentsPage() {
         <HeroCard
           label="Tomorrow"
           sublabel="Expected tomorrow"
-          amount={stats?.tomorrow}
+          amount={stats?.tomorrow?.amount}
           loading={statsLoading}
           icon={ClockIcon}
           colorClasses="bg-gradient-to-br from-blue-500 to-indigo-600 text-white"
@@ -306,7 +306,7 @@ export default function PaymentsPage() {
         <HeroCard
           label="This Week"
           sublabel="Next 7 days total"
-          amount={stats?.week}
+          amount={stats?.thisWeek?.amount}
           loading={statsLoading}
           icon={CalendarDaysIcon}
           colorClasses="bg-gradient-to-br from-purple-500 to-violet-600 text-white"

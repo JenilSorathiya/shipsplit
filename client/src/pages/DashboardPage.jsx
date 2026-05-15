@@ -11,16 +11,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 
-/* ── Placeholder chart data (no analytics API yet) ───── */
-const CHART_DATA = [
-  { day: 'Mon', orders: 0, labels: 0 },
-  { day: 'Tue', orders: 0, labels: 0 },
-  { day: 'Wed', orders: 0, labels: 0 },
-  { day: 'Thu', orders: 0, labels: 0 },
-  { day: 'Fri', orders: 0, labels: 0 },
-  { day: 'Sat', orders: 0, labels: 0 },
-  { day: 'Sun', orders: 0, labels: 0 },
-];
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const PLATFORM_DOT = {
   amazon:   'bg-[#FF9900]',
@@ -93,19 +84,35 @@ export default function DashboardPage() {
   const [pendingCount,  setPendingCount]  = useState(null);
   const [shippedCount,  setShippedCount]  = useState(null);
   const [statsLoading,  setStatsLoading]  = useState(true);
+  const [chartData,     setChartData]     = useState(
+    DAY_LABELS.map((day) => ({ day, orders: 0, labels: 0 }))
+  );
 
   const loadData = async () => {
     setStatsLoading(true);
     try {
-      const [recentRes, pendingRes, shippedRes] = await Promise.all([
+      const [recentRes, pendingRes, shippedRes, chartRes] = await Promise.allSettled([
         api.get('/orders', { params: { limit: 7, sortBy: 'createdAt', sortOrder: 'desc' } }),
         api.get('/orders', { params: { limit: 1, status: 'pending' } }),
         api.get('/orders', { params: { limit: 1, status: 'shipped'  } }),
+        api.get('/reports/orders-by-day', { params: { range: '7d' } }),
       ]);
-      setRecentOrders(Array.isArray(recentRes.data) ? recentRes.data : []);
-      setTotalOrders(recentRes.meta?.total ?? recentRes.data?.length ?? 0);
-      setPendingCount(pendingRes.meta?.total ?? 0);
-      setShippedCount(shippedRes.meta?.total ?? 0);
+      if (recentRes.status === 'fulfilled') {
+        setRecentOrders(Array.isArray(recentRes.value.data) ? recentRes.value.data : []);
+        setTotalOrders(recentRes.value.meta?.total ?? recentRes.value.data?.length ?? 0);
+      }
+      if (pendingRes.status === 'fulfilled') setPendingCount(pendingRes.value.meta?.total ?? 0);
+      if (shippedRes.status === 'fulfilled') setShippedCount(shippedRes.value.meta?.total ?? 0);
+      if (chartRes.status === 'fulfilled') {
+        const raw = chartRes.value.data?.data ?? chartRes.value.data ?? [];
+        if (Array.isArray(raw) && raw.length) {
+          setChartData(raw.map((d) => ({
+            day: DAY_LABELS[new Date(d.date).getDay()] ?? d.date,
+            orders: d.orders ?? d.count ?? 0,
+            labels: d.labels ?? 0,
+          })));
+        }
+      }
     } catch {
       // silent
     } finally {
@@ -155,7 +162,10 @@ export default function DashboardPage() {
             <TagIcon className="h-3.5 w-3.5" />
             Generate Labels
           </button>
-          <button className="btn-secondary btn-sm gap-1.5">
+          <button
+            onClick={() => window.open(`${import.meta.env.VITE_API_URL ?? '/api'}/reports/export.csv`, '_blank')}
+            className="btn-secondary btn-sm gap-1.5"
+          >
             <DocumentArrowDownIcon className="h-3.5 w-3.5" />
             Download CSV
           </button>
@@ -213,7 +223,7 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="font-semibold text-gray-900">Orders This Week</h3>
-              <p className="text-xs text-gray-400 mt-0.5">Chart analytics coming soon</p>
+              <p className="text-xs text-gray-400 mt-0.5">Daily order breakdown</p>
             </div>
             <div className="flex items-center gap-4 text-xs text-gray-500">
               <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-primary-500 block" />Orders</span>
@@ -221,7 +231,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={CHART_DATA} margin={{ top: 0, right: 4, left: -16, bottom: 0 }}>
+            <AreaChart data={chartData} margin={{ top: 0, right: 4, left: -16, bottom: 0 }}>
               <defs>
                 <linearGradient id="orders" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%"  stopColor="#2563eb" stopOpacity={0.15} />

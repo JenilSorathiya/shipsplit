@@ -185,7 +185,7 @@ export default function ReturnsPage() {
     setStatsLoad(true);
     api.get('/returns/stats')
       .then(({ data }) => setStats(data))
-      .catch(() => setStats({ total: 0, rto: 0, cto: 0, refund_pending: 0 }))
+      .catch(() => setStats({ total: 0, rto: 0, cto: 0, pendingRefund: 0 }))
       .finally(() => setStatsLoad(false));
   }, []);
 
@@ -298,7 +298,7 @@ export default function ReturnsPage() {
         />
         <StatCard
           title="Refund Pending"
-          value={statsLoad ? null : (stats?.refund_pending ?? 0).toLocaleString('en-IN')}
+          value={statsLoad ? null : (stats?.pendingRefund ?? 0).toLocaleString('en-IN')}
           icon={InformationCircleIcon}
           iconBg="bg-purple-50"
           iconColor="text-purple-500"

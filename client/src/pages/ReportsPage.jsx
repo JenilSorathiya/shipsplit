@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   BarChart, Bar, AreaChart, Area, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
 } from 'recharts';
 import {
@@ -9,52 +9,18 @@ import {
   ArrowTrendingUpIcon, ArrowTrendingDownIcon,
   TruckIcon, ShoppingBagIcon, ArrowPathIcon, TagIcon,
 } from '@heroicons/react/24/outline';
+import api from '../utils/api';
+import toast from 'react-hot-toast';
 
-/* ── Mock data ─────────────────────────────────────────── */
-const DAILY_DATA = [
-  { date: 'Apr 1',  amazon: 42, flipkart: 28, meesho: 19, myntra: 11 },
-  { date: 'Apr 2',  amazon: 55, flipkart: 34, meesho: 25, myntra: 14 },
-  { date: 'Apr 3',  amazon: 38, flipkart: 22, meesho: 16, myntra:  9 },
-  { date: 'Apr 4',  amazon: 67, flipkart: 41, meesho: 31, myntra: 18 },
-  { date: 'Apr 5',  amazon: 84, flipkart: 52, meesho: 38, myntra: 22 },
-  { date: 'Apr 6',  amazon: 91, flipkart: 58, meesho: 44, myntra: 25 },
-  { date: 'Apr 7',  amazon: 73, flipkart: 47, meesho: 35, myntra: 20 },
-  { date: 'Apr 8',  amazon: 62, flipkart: 39, meesho: 28, myntra: 17 },
-  { date: 'Apr 9',  amazon: 78, flipkart: 49, meesho: 36, myntra: 21 },
-  { date: 'Apr 10', amazon: 89, flipkart: 55, meesho: 41, myntra: 24 },
-];
-
-const COURIER_PIE = [
-  { name: 'Delhivery',  value: 38, color: '#2563eb' },
-  { name: 'Shiprocket', value: 24, color: '#16a34a' },
-  { name: 'BlueDart',   value: 18, color: '#ea580c' },
-  { name: 'DTDC',       value: 12, color: '#9333ea' },
-  { name: 'Ekart',      value:  8, color: '#0891b2' },
-];
-
-const SKU_DATA = [
-  { sku: 'KRT-NB-XL', product: 'Cotton Kurta Set XL',       platform: 'amazon',   orders: 342, returns: 12, revenue: '₹1,02,258' },
-  { sku: 'SHO-MR-42', product: "Men's Running Shoes Sz 42", platform: 'flipkart', orders: 287, returns:  8, revenue: '₹85,913'  },
-  { sku: 'SAR-FP-OS', product: 'Floral Printed Saree OS',   platform: 'meesho',   orders: 251, returns: 22, revenue: '₹75,299'  },
-  { sku: 'JNS-DB-32', product: 'Slim Fit Jeans Dark Blue',  platform: 'myntra',   orders: 198, returns:  6, revenue: '₹69,300'  },
-  { sku: 'BTL-SS-1L', product: 'Stainless Steel Bottle 1L', platform: 'amazon',   orders: 176, returns:  4, revenue: '₹52,624'  },
-  { sku: 'DRS-WF-M',  product: "Women's Floral Dress M",    platform: 'flipkart', orders: 154, returns: 11, revenue: '₹46,200'  },
-];
-
-const COURIER_TABLE = [
-  { courier: 'Delhivery',  shipments: 4381, delivered: 4102, returns: 127, rate: '93.7%', avgDays: 2.8 },
-  { courier: 'Shiprocket', shipments: 2764, delivered: 2530, returns:  98, rate: '91.5%', avgDays: 3.2 },
-  { courier: 'BlueDart',   shipments: 2073, delivered: 1981, returns:  42, rate: '95.6%', avgDays: 1.9 },
-  { courier: 'DTDC',       shipments: 1382, delivered: 1244, returns:  76, rate: '90.0%', avgDays: 3.7 },
-  { courier: 'Ekart',      shipments:  921, delivered:  842, returns:  38, rate: '91.4%', avgDays: 3.1 },
-];
-
+/* ── Platform style map ──────────────────────────────── */
 const PLATFORM_STYLE = {
   amazon:   'bg-[#FF9900]/10 text-[#b36b00]',
   flipkart: 'bg-[#2874F0]/10 text-[#1857c7]',
   meesho:   'bg-[#F43397]/10 text-[#c41374]',
   myntra:   'bg-[#FF3F6C]/10 text-[#d0163e]',
 };
+
+const COURIER_COLORS = ['#2563eb','#16a34a','#ea580c','#9333ea','#0891b2','#ca8a04'];
 
 const RANGE_OPTIONS = [
   { label: '7 days',  value: '7d' },
@@ -84,53 +50,108 @@ function PieTooltip({ active, payload }) {
   return (
     <div className="bg-white rounded-xl shadow-modal border border-gray-100 px-3.5 py-2.5 text-xs">
       <p className="font-semibold text-gray-700">{payload[0].name}</p>
-      <p className="text-gray-500 mt-0.5">{payload[0].value}% of shipments</p>
+      <p className="text-gray-500 mt-0.5">{payload[0].value} shipments</p>
     </div>
   );
 }
 
 /* ── Summary stat card ───────────────────────────────── */
-function SumCard({ label, value, sub, change, positive, icon: Icon, color }) {
+function SumCard({ label, value, sub, change, positive, icon: Icon, color, loading }) {
   return (
     <div className="card p-5">
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{label}</p>
-          <p className="mt-1.5 text-2xl font-bold text-gray-900">{value}</p>
+          {loading
+            ? <div className="mt-1.5 h-7 w-20 bg-gray-100 rounded animate-pulse" />
+            : <p className="mt-1.5 text-2xl font-bold text-gray-900">{value ?? '—'}</p>}
           {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
         </div>
         <div className={`h-10 w-10 rounded-xl ${color} flex items-center justify-center flex-shrink-0`}>
           <Icon className="h-5 w-5" />
         </div>
       </div>
-      {change !== undefined && (
+      {change !== undefined && !loading && (
         <div className={`mt-3 flex items-center gap-1 text-xs font-semibold ${positive ? 'text-success-600' : 'text-red-500'}`}>
           {positive ? <ArrowTrendingUpIcon className="h-3.5 w-3.5" /> : <ArrowTrendingDownIcon className="h-3.5 w-3.5" />}
-          {change}% vs previous period
+          {Math.abs(change)}% vs previous period
         </div>
       )}
     </div>
   );
 }
 
-/* ── Export button ───────────────────────────────────── */
-function ExportBtn({ label, sub }) {
-  return (
-    <button className="flex items-center gap-3 p-4 rounded-xl border border-gray-200 hover:border-primary-300 hover:bg-primary-50/30 transition-all group text-left w-full">
-      <div className="h-9 w-9 rounded-lg bg-gray-100 group-hover:bg-primary-100 flex items-center justify-center flex-shrink-0 transition-colors">
-        <DocumentArrowDownIcon className="h-4.5 w-4.5 text-gray-500 group-hover:text-primary-600 transition-colors" />
-      </div>
-      <div>
-        <p className="text-sm font-semibold text-gray-800 group-hover:text-primary-700 transition-colors">{label}</p>
-        <p className="text-xs text-gray-400">{sub}</p>
-      </div>
-    </button>
-  );
+/* ── Skeleton rows ───────────────────────────────────── */
+function SkeletonRows({ cols, rows = 4 }) {
+  return Array.from({ length: rows }).map((_, i) => (
+    <tr key={i} className="animate-pulse">
+      {Array.from({ length: cols }).map((_, j) => (
+        <td key={j} className="table-td"><div className="h-3.5 bg-gray-100 rounded w-3/4" /></td>
+      ))}
+    </tr>
+  ));
 }
 
 /* ── Main page ───────────────────────────────────────── */
 export default function ReportsPage() {
   const [range, setRange] = useState('30d');
+
+  const [summary,     setSummary]     = useState(null);
+  const [dailyData,   setDailyData]   = useState([]);
+  const [courierData, setCourierData] = useState([]);
+  const [skuData,     setSkuData]     = useState([]);
+  const [loading,     setLoading]     = useState(true);
+  const [exporting,   setExporting]   = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [summaryRes, dailyRes, courierRes, skuRes] = await Promise.allSettled([
+        api.get('/reports/summary',           { params: { range } }),
+        api.get('/reports/orders-by-day',     { params: { range } }),
+        api.get('/reports/courier-breakdown', { params: { range } }),
+        api.get('/reports/sku-breakdown',     { params: { range } }),
+      ]);
+      if (summaryRes.status === 'fulfilled') setSummary(summaryRes.value.data?.summary ?? summaryRes.value.data ?? {});
+      if (dailyRes.status   === 'fulfilled') setDailyData(dailyRes.value.data?.data   ?? dailyRes.value.data   ?? []);
+      if (courierRes.status === 'fulfilled') setCourierData(courierRes.value.data?.data ?? courierRes.value.data ?? []);
+      if (skuRes.status     === 'fulfilled') setSkuData(skuRes.value.data?.data       ?? skuRes.value.data     ?? []);
+    } catch {
+      toast.error('Failed to load reports');
+    } finally {
+      setLoading(false);
+    }
+  }, [range]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleExport = async (type) => {
+    setExporting(true);
+    try {
+      const resp = await api.get('/reports/export.csv', {
+        params: { range, type },
+        responseType: 'blob',
+      });
+      const url  = URL.createObjectURL(new Blob([resp.data]));
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `shipsplit-${type ?? 'orders'}-${range}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Export failed. Try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  /* ── Derived values ──────────────────────────────────── */
+  const pieData = courierData
+    .slice(0, 6)
+    .map((c, i) => ({ name: c.courier ?? c.name ?? c._id, value: c.shipments ?? c.count ?? 0, color: COURIER_COLORS[i] }));
+
+  const totalShipments = pieData.reduce((s, c) => s + c.value, 0);
+  const pieWithPct = pieData.map((c) => ({ ...c, pct: totalShipments ? Math.round((c.value / totalShipments) * 100) : 0 }));
 
   return (
     <div className="space-y-6 animate-slide-up">
@@ -141,7 +162,6 @@ export default function ReportsPage() {
           <p className="page-sub">Track performance across all platforms and couriers.</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Range picker */}
           <div className="flex items-center bg-white border border-gray-200 rounded-lg p-0.5 gap-0.5">
             {RANGE_OPTIONS.map(({ label, value }) => (
               <button
@@ -154,19 +174,41 @@ export default function ReportsPage() {
               </button>
             ))}
           </div>
-          <button className="btn-secondary btn-sm gap-1.5">
-            <CalendarDaysIcon className="h-3.5 w-3.5" />
-            Custom Range
-          </button>
         </div>
       </div>
 
       {/* ── Summary stats ──────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <SumCard label="Total Orders"    value="11,521"  sub="Apr 1–10" change={12.4} positive={true}  icon={ShoppingBagIcon}      color="bg-primary-50 text-primary-600" />
-        <SumCard label="Labels Printed"  value="10,847"  sub="94.1% coverage" change={9.8}  positive={true}  icon={TagIcon}              color="bg-success-50 text-success-600" />
-        <SumCard label="Return Rate"     value="3.2%"    sub="368 returns"    change={0.4}  positive={false} icon={ArrowPathIcon}        color="bg-warning-50 text-warning-600" />
-        <SumCard label="Avg. Delivery"   value="2.9 days" sub="Across all couriers"         icon={TruckIcon}            color="bg-purple-50 text-purple-600" />
+        <SumCard
+          label="Total Orders"
+          value={summary?.totalOrders?.toLocaleString('en-IN')}
+          loading={loading}
+          icon={ShoppingBagIcon}
+          color="bg-primary-50 text-primary-600"
+        />
+        <SumCard
+          label="Labels Printed"
+          value={summary?.labelsGenerated?.toLocaleString('en-IN')}
+          loading={loading}
+          icon={TagIcon}
+          color="bg-success-50 text-success-600"
+        />
+        <SumCard
+          label="Return Rate"
+          value={summary?.returnRate != null ? `${summary.returnRate.toFixed(1)}%` : null}
+          sub={summary?.totalReturns ? `${summary.totalReturns} returns` : undefined}
+          loading={loading}
+          icon={ArrowPathIcon}
+          color="bg-warning-50 text-warning-600"
+        />
+        <SumCard
+          label="Avg. Delivery"
+          value={summary?.avgDeliveryDays != null ? `${summary.avgDeliveryDays} days` : null}
+          sub="Across all couriers"
+          loading={loading}
+          icon={TruckIcon}
+          color="bg-purple-50 text-purple-600"
+        />
       </div>
 
       {/* ── Main charts row ─────────────────────────── */}
@@ -187,53 +229,57 @@ export default function ReportsPage() {
               ))}
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={230}>
-            <BarChart data={DAILY_DATA} barSize={10} barGap={2}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: '#f8fafc' }} />
-              <Bar dataKey="amazon"   fill="#FF9900" radius={[3,3,0,0]} name="Amazon" />
-              <Bar dataKey="flipkart" fill="#2874F0" radius={[3,3,0,0]} name="Flipkart" />
-              <Bar dataKey="meesho"   fill="#F43397" radius={[3,3,0,0]} name="Meesho" />
-              <Bar dataKey="myntra"   fill="#FF3F6C" radius={[3,3,0,0]} name="Myntra" />
-            </BarChart>
-          </ResponsiveContainer>
+          {loading ? (
+            <div className="h-[230px] bg-gray-50 rounded-xl animate-pulse" />
+          ) : dailyData.length === 0 ? (
+            <div className="h-[230px] flex items-center justify-center text-sm text-gray-400">No data for this period</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={230}>
+              <BarChart data={dailyData} barSize={10} barGap={2}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                <XAxis dataKey="date" tickFormatter={(d) => d?.slice(5)} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: '#f8fafc' }} />
+                <Bar dataKey="amazon"   fill="#FF9900" radius={[3,3,0,0]} name="Amazon" />
+                <Bar dataKey="flipkart" fill="#2874F0" radius={[3,3,0,0]} name="Flipkart" />
+                <Bar dataKey="meesho"   fill="#F43397" radius={[3,3,0,0]} name="Meesho" />
+                <Bar dataKey="myntra"   fill="#FF3F6C" radius={[3,3,0,0]} name="Myntra" />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
 
         {/* Courier pie chart */}
         <div className="card p-5">
           <h3 className="font-semibold text-gray-900 mb-1">Courier Distribution</h3>
           <p className="text-xs text-gray-400 mb-4">Share of shipments</p>
-          <ResponsiveContainer width="100%" height={180}>
-            <PieChart>
-              <Pie
-                data={COURIER_PIE}
-                cx="50%"
-                cy="50%"
-                innerRadius={50}
-                outerRadius={80}
-                paddingAngle={3}
-                dataKey="value"
-              >
-                {COURIER_PIE.map((entry, i) => (
-                  <Cell key={i} fill={entry.color} />
+          {loading ? (
+            <div className="h-[180px] bg-gray-50 rounded-xl animate-pulse" />
+          ) : pieWithPct.length === 0 ? (
+            <div className="h-[180px] flex items-center justify-center text-sm text-gray-400">No data</div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={180}>
+                <PieChart>
+                  <Pie data={pieWithPct} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
+                    {pieWithPct.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                  </Pie>
+                  <Tooltip content={<PieTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="space-y-2 mt-3">
+                {pieWithPct.map((c) => (
+                  <div key={c.name} className="flex items-center justify-between text-xs">
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ background: c.color }} />
+                      <span className="text-gray-600">{c.name}</span>
+                    </span>
+                    <span className="font-semibold text-gray-800">{c.pct}%</span>
+                  </div>
                 ))}
-              </Pie>
-              <Tooltip content={<PieTooltip />} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="space-y-2 mt-3">
-            {COURIER_PIE.map((c) => (
-              <div key={c.name} className="flex items-center justify-between text-xs">
-                <span className="flex items-center gap-2">
-                  <span className="h-2 w-2 rounded-full flex-shrink-0" style={{ background: c.color }} />
-                  <span className="text-gray-600">{c.name}</span>
-                </span>
-                <span className="font-semibold text-gray-800">{c.value}%</span>
               </div>
-            ))}
-          </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -242,12 +288,29 @@ export default function ReportsPage() {
         <h3 className="font-semibold text-gray-900 mb-1">Export Reports</h3>
         <p className="text-xs text-gray-400 mb-4">Download detailed CSV reports for the selected period.</p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          <ExportBtn label="Summary Report"    sub="All platforms, all metrics" />
-          <ExportBtn label="Courier-wise CSV"  sub="Delivery rates, ETAs, returns" />
-          <ExportBtn label="SKU-wise CSV"      sub="Product performance report" />
-          <ExportBtn label="Orders CSV"        sub="Raw order data with status" />
-          <ExportBtn label="Returns Report"    sub="Return reasons & patterns" />
-          <ExportBtn label="Revenue Report"    sub="Platform-wise revenue split" />
+          {[
+            { label: 'Orders CSV',       sub: 'Raw order data with status',          type: 'orders'   },
+            { label: 'Courier-wise CSV', sub: 'Delivery rates, ETAs, returns',       type: 'couriers' },
+            { label: 'SKU-wise CSV',     sub: 'Product performance report',          type: 'sku'      },
+            { label: 'Returns Report',   sub: 'Return reasons & patterns',           type: 'returns'  },
+            { label: 'Summary Report',   sub: 'All platforms, all metrics',          type: 'summary'  },
+            { label: 'Revenue Report',   sub: 'Platform-wise revenue split',         type: 'revenue'  },
+          ].map(({ label, sub, type }) => (
+            <button
+              key={type}
+              onClick={() => handleExport(type)}
+              disabled={exporting}
+              className="flex items-center gap-3 p-4 rounded-xl border border-gray-200 hover:border-primary-300 hover:bg-primary-50/30 transition-all group text-left w-full disabled:opacity-50"
+            >
+              <div className="h-9 w-9 rounded-lg bg-gray-100 group-hover:bg-primary-100 flex items-center justify-center flex-shrink-0 transition-colors">
+                <DocumentArrowDownIcon className="h-4.5 w-4.5 text-gray-500 group-hover:text-primary-600 transition-colors" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-800 group-hover:text-primary-700 transition-colors">{label}</p>
+                <p className="text-xs text-gray-400">{sub}</p>
+              </div>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -271,29 +334,29 @@ export default function ReportsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {COURIER_TABLE.map((row) => {
-                const rate = parseFloat(row.rate);
+              {loading ? <SkeletonRows cols={7} /> : courierData.length === 0 ? (
+                <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-gray-400">No courier data for this period</td></tr>
+              ) : courierData.map((row) => {
+                const rate = row.deliveryRate ?? (row.delivered && row.shipments ? Math.round((row.delivered / row.shipments) * 100) : 0);
                 const barColor = rate >= 95 ? '#16a34a' : rate >= 92 ? '#2563eb' : '#ea580c';
                 return (
-                  <tr key={row.courier} className="table-row">
-                    <td className="table-td">
-                      <span className="font-semibold text-gray-900">{row.courier}</span>
-                    </td>
-                    <td className="table-td tabular-nums">{row.shipments.toLocaleString('en-IN')}</td>
-                    <td className="table-td tabular-nums text-success-700 font-medium">{row.delivered.toLocaleString('en-IN')}</td>
-                    <td className="table-td tabular-nums text-red-600">{row.returns}</td>
+                  <tr key={row.courier ?? row._id} className="table-row">
+                    <td className="table-td"><span className="font-semibold text-gray-900">{row.courier ?? row._id}</span></td>
+                    <td className="table-td tabular-nums">{(row.shipments ?? 0).toLocaleString('en-IN')}</td>
+                    <td className="table-td tabular-nums text-success-700 font-medium">{(row.delivered ?? 0).toLocaleString('en-IN')}</td>
+                    <td className="table-td tabular-nums text-red-600">{row.returns ?? 0}</td>
                     <td className="table-td">
                       <span className={`font-semibold ${rate >= 95 ? 'text-success-700' : rate >= 92 ? 'text-primary-700' : 'text-warning-700'}`}>
-                        {row.rate}
+                        {rate}%
                       </span>
                     </td>
-                    <td className="table-td tabular-nums">{row.avgDays} days</td>
+                    <td className="table-td tabular-nums">{row.avgDays ?? '—'} {row.avgDays ? 'days' : ''}</td>
                     <td className="table-td min-w-[120px]">
                       <div className="flex items-center gap-2">
                         <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full" style={{ width: row.rate, background: barColor }} />
+                          <div className="h-full rounded-full" style={{ width: `${rate}%`, background: barColor }} />
                         </div>
-                        <span className="text-2xs text-gray-400 w-8">{row.rate}</span>
+                        <span className="text-2xs text-gray-400 w-8">{rate}%</span>
                       </div>
                     </td>
                   </tr>
@@ -311,7 +374,7 @@ export default function ReportsPage() {
             <h3 className="font-semibold text-gray-900">Top SKUs by Volume</h3>
             <p className="text-xs text-gray-400 mt-0.5">Best performing products this period</p>
           </div>
-          <button className="btn-secondary btn-sm gap-1.5">
+          <button onClick={() => handleExport('sku')} disabled={exporting} className="btn-secondary btn-sm gap-1.5 disabled:opacity-50">
             <DocumentArrowDownIcon className="h-3.5 w-3.5" />
             Export SKU CSV
           </button>
@@ -330,21 +393,27 @@ export default function ReportsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {SKU_DATA.map((row, i) => (
-                <tr key={row.sku} className="table-row">
+              {loading ? <SkeletonRows cols={7} /> : skuData.length === 0 ? (
+                <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-gray-400">No SKU data for this period</td></tr>
+              ) : skuData.map((row, i) => (
+                <tr key={row.sku ?? i} className="table-row">
                   <td className="table-td text-xs font-bold text-gray-400">#{i + 1}</td>
-                  <td className="table-td font-mono text-xs font-semibold text-gray-800">{row.sku}</td>
+                  <td className="table-td font-mono text-xs font-semibold text-gray-800">{row.sku ?? '—'}</td>
                   <td className="table-td text-xs text-gray-700 max-w-[180px]">
-                    <span className="truncate block">{row.product}</span>
+                    <span className="truncate block">{row.product ?? row.name ?? '—'}</span>
                   </td>
                   <td className="table-td">
-                    <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-md capitalize ${PLATFORM_STYLE[row.platform]}`}>
-                      {row.platform}
-                    </span>
+                    {row.platform ? (
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-md capitalize ${PLATFORM_STYLE[row.platform] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {row.platform}
+                      </span>
+                    ) : '—'}
                   </td>
-                  <td className="table-td font-semibold tabular-nums">{row.orders.toLocaleString('en-IN')}</td>
-                  <td className="table-td tabular-nums text-red-600 text-xs">{row.returns}</td>
-                  <td className="table-td font-semibold text-success-700">{row.revenue}</td>
+                  <td className="table-td font-semibold tabular-nums">{(row.orders ?? row.count ?? 0).toLocaleString('en-IN')}</td>
+                  <td className="table-td tabular-nums text-red-600 text-xs">{row.returns ?? 0}</td>
+                  <td className="table-td font-semibold text-success-700">
+                    {row.revenue != null ? `₹${Number(row.revenue).toLocaleString('en-IN')}` : '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>

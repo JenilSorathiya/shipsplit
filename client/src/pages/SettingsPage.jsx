@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { useSubscription, useInvoices } from '../hooks/useSubscription';
 import api from '../utils/api';
 import toast from 'react-hot-toast';
 import {
@@ -65,27 +66,14 @@ const PLATFORMS = [
 ];
 
 const COURIERS_LIST = [
-  { id: 'delhivery',  name: 'Delhivery',  logo: '🚚', connected: true,  apiKey: 'DLV_****_**** _2891', zones: 'Pan India' },
-  { id: 'shiprocket', name: 'Shiprocket', logo: '🚀', connected: true,  apiKey: 'SHR_****_****_7734', zones: 'Pan India' },
-  { id: 'bluedart',   name: 'BlueDart',   logo: '🔵', connected: false, apiKey: null, zones: 'Metro+' },
-  { id: 'dtdc',       name: 'DTDC',       logo: '📦', connected: true,  apiKey: 'DTDC_****_****_3312', zones: 'Pan India' },
-  { id: 'ekart',      name: 'Ekart',      logo: '🛒', connected: true,  apiKey: 'EKT_****_****_9021', zones: 'Pan India' },
-  { id: 'xpressbees', name: 'XpressBees', logo: '🐝', connected: false, apiKey: null, zones: 'Pan India' },
+  { id: 'delhivery',  name: 'Delhivery',  logo: '🚚', zones: 'Pan India' },
+  { id: 'shiprocket', name: 'Shiprocket', logo: '🚀', zones: 'Pan India' },
+  { id: 'bluedart',   name: 'BlueDart',   logo: '🔵', zones: 'Metro+' },
+  { id: 'dtdc',       name: 'DTDC',       logo: '📦', zones: 'Pan India' },
+  { id: 'ekart',      name: 'Ekart',      logo: '🛒', zones: 'Pan India' },
+  { id: 'xpressbees', name: 'XpressBees', logo: '🐝', zones: 'Pan India' },
 ];
 
-const TEAM_MEMBERS = [
-  { id: 1, name: 'Rahul Agarwal',   email: 'rahul@stylekart.in',   role: 'Owner',    avatar: 'R', status: 'active', joined: 'Jan 2025' },
-  { id: 2, name: 'Priya Sharma',    email: 'priya@stylekart.in',   role: 'Manager',  avatar: 'P', status: 'active', joined: 'Mar 2025' },
-  { id: 3, name: 'Ankit Verma',     email: 'ankit@stylekart.in',   role: 'Operator', avatar: 'A', status: 'active', joined: 'Apr 2025' },
-  { id: 4, name: 'Sneha Patel',     email: 'sneha@stylekart.in',   role: 'Viewer',   avatar: 'S', status: 'invited', joined: '—' },
-];
-
-const ROLE_BADGE = {
-  Owner:    'badge-blue',
-  Manager:  'badge-green',
-  Operator: 'badge-orange',
-  Viewer:   'badge-gray',
-};
 
 /* ── Section wrapper ─────────────────────────────────── */
 function Section({ title, desc, children, action }) {
@@ -131,6 +119,27 @@ function NotificationsSection() {
   const [prefs, setPrefs] = useState(
     Object.fromEntries(NOTIF_DEFAULTS.map(({ key, def }) => [key, def]))
   );
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    api.get('/settings')
+      .then(({ data }) => {
+        if (data?.notifications) setPrefs((p) => ({ ...p, ...data.notifications }));
+      })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, []);
+
+  const handleToggle = async (key, value) => {
+    setPrefs((p) => ({ ...p, [key]: value }));
+    try {
+      await api.put('/settings/notifications', { [key]: value });
+    } catch {
+      setPrefs((p) => ({ ...p, [key]: !value })); // revert on error
+      toast.error('Failed to save notification preference');
+    }
+  };
+
   return (
     <Section title="Notifications" desc="Choose which emails and alerts you receive.">
       <div className="space-y-3">
@@ -140,7 +149,7 @@ function NotificationsSection() {
               <p className="text-sm font-medium text-gray-800">{label}</p>
               <p className="text-xs text-gray-400">{sub}</p>
             </div>
-            <Toggle checked={prefs[key]} onChange={(v) => setPrefs((p) => ({ ...p, [key]: v }))} />
+            <Toggle checked={prefs[key]} onChange={(v) => handleToggle(key, v)} />
           </div>
         ))}
       </div>
@@ -150,18 +159,60 @@ function NotificationsSection() {
 
 /* ── Profile tab ─────────────────────────────────────── */
 function ProfileTab({ user }) {
-  const [form, setForm]       = useState({ name: user?.name || '', phone: user?.phone || '', gstin: '', business: '' });
+  const [form, setForm]     = useState({
+    name:         user?.name         || '',
+    phone:        user?.phone        || '',
+    gstin:        user?.gstin        || '',
+    businessName: user?.businessName || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [saved,  setSaved]  = useState(false);
+
+  const [pw, setPw]           = useState({ current: '', newPw: '', confirm: '' });
   const [showPw, setShowPw]   = useState(false);
-  const [saved, setSaved]     = useState(false);
-  const update = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const handleSave = () => { setSaved(true); setTimeout(() => setSaved(false), 2500); };
+  const [pwSaving, setPwSaving] = useState(false);
+
+  const update   = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const updatePw = (k, v) => setPw((p)  => ({ ...p, [k]: v }));
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.put('/auth/profile', {
+        name:         form.name,
+        phone:        form.phone,
+        gstin:        form.gstin,
+        businessName: form.businessName,
+      });
+      setSaved(true);
+      toast.success('Profile saved');
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to save profile');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!pw.current)          { toast.error('Enter your current password'); return; }
+    if (pw.newPw.length < 8)  { toast.error('New password must be at least 8 characters'); return; }
+    if (pw.newPw !== pw.confirm) { toast.error('New passwords do not match'); return; }
+    setPwSaving(true);
+    try {
+      await api.put('/auth/change-password', { currentPassword: pw.current, newPassword: pw.newPw });
+      toast.success('Password changed successfully');
+      setPw({ current: '', newPw: '', confirm: '' });
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to change password');
+    } finally {
+      setPwSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
-      <Section
-        title="Personal Information"
-        desc="Update your account details and business info."
-      >
+      <Section title="Personal Information" desc="Update your account details and business info.">
         <div className="grid sm:grid-cols-2 gap-4">
           <div>
             <label className="form-label">Full Name</label>
@@ -178,15 +229,19 @@ function ProfileTab({ user }) {
           </div>
           <div>
             <label className="form-label">Business / Store Name</label>
-            <input className="form-input" placeholder="StyleKart" value={form.business} onChange={(e) => update('business', e.target.value)} />
+            <input className="form-input" placeholder="StyleKart" value={form.businessName} onChange={(e) => update('businessName', e.target.value)} />
           </div>
           <div className="sm:col-span-2">
             <label className="form-label">GSTIN <span className="text-gray-400 font-normal">(optional)</span></label>
             <input className="form-input uppercase" placeholder="22AAAAA0000A1Z5" maxLength={15} value={form.gstin} onChange={(e) => update('gstin', e.target.value.toUpperCase())} />
           </div>
         </div>
-        <button onClick={handleSave} className={`mt-4 btn-primary btn-sm ${saved ? '!bg-success-600' : ''}`}>
-          {saved ? <><CheckCircleSolid className="h-3.5 w-3.5" />Saved!</> : 'Save Changes'}
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className={`mt-4 btn-primary btn-sm ${saved ? '!bg-success-600' : ''}`}
+        >
+          {saving ? 'Saving…' : saved ? <><CheckCircleSolid className="h-3.5 w-3.5" />Saved!</> : 'Save Changes'}
         </button>
       </Section>
 
@@ -195,7 +250,13 @@ function ProfileTab({ user }) {
           <div className="sm:col-span-2">
             <label className="form-label">Current Password</label>
             <div className="relative">
-              <input type={showPw ? 'text' : 'password'} className="form-input pr-10" placeholder="••••••••" />
+              <input
+                type={showPw ? 'text' : 'password'}
+                className="form-input pr-10"
+                placeholder="••••••••"
+                value={pw.current}
+                onChange={(e) => updatePw('current', e.target.value)}
+              />
               <button type="button" onClick={() => setShowPw(!showPw)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
                 {showPw ? <EyeSlashIcon className="h-4 w-4" /> : <EyeIcon className="h-4 w-4" />}
               </button>
@@ -203,14 +264,20 @@ function ProfileTab({ user }) {
           </div>
           <div>
             <label className="form-label">New Password</label>
-            <input type="password" className="form-input" placeholder="Min 8 characters" />
+            <input type="password" className="form-input" placeholder="Min 8 characters" value={pw.newPw} onChange={(e) => updatePw('newPw', e.target.value)} />
           </div>
           <div>
             <label className="form-label">Confirm New Password</label>
-            <input type="password" className="form-input" placeholder="Repeat new password" />
+            <input type="password" className="form-input" placeholder="Repeat new password" value={pw.confirm} onChange={(e) => updatePw('confirm', e.target.value)} />
           </div>
         </div>
-        <button className="mt-4 btn-secondary btn-sm">Update Password</button>
+        <button
+          onClick={handleChangePassword}
+          disabled={pwSaving}
+          className="mt-4 btn-secondary btn-sm"
+        >
+          {pwSaving ? 'Updating…' : 'Update Password'}
+        </button>
       </Section>
 
       <NotificationsSection />
@@ -338,9 +405,19 @@ function PlatformsTab() {
                 )}
               </div>
               {isConnected ? (
-                <p className="text-2xs text-gray-400 mt-0.5">
-                  Last sync: {status.lastSyncedAt ? new Date(status.lastSyncedAt).toLocaleString('en-IN') : 'Never'}
-                </p>
+                <div className="mt-0.5 space-y-0.5">
+                  {(status.sellerEmail || status.storeName || status.sellerId) && (
+                    <p className="text-2xs text-gray-500 font-medium truncate">
+                      {status.storeName || status.sellerEmail || status.sellerId}
+                    </p>
+                  )}
+                  <p className="text-2xs text-gray-400">
+                    {status.totalOrdersSynced != null && status.totalOrdersSynced > 0
+                      ? `${status.totalOrdersSynced.toLocaleString('en-IN')} orders synced · `
+                      : ''}
+                    Last sync: {status.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString('en-IN') : 'Never'}
+                  </p>
+                </div>
               ) : (
                 <p className="text-xs text-gray-400 mt-0.5">Connect your {p.name} seller account</p>
               )}
@@ -432,39 +509,194 @@ function ArrowPathIcon({ className }) {
 
 /* ── Couriers tab ────────────────────────────────────── */
 function CouriersTab() {
+  const [couriers,     setCouriers]     = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [connectForm,  setConnectForm]  = useState(null); // slug being connected
+  const [editTarget,   setEditTarget]   = useState(null); // courier _id being edited
+  const [form,         setForm]         = useState({ apiKey: '', pickupPincode: '' });
+  const [saving,       setSaving]       = useState(false);
+
+  const upd = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/settings/couriers');
+      setCouriers(data?.couriers ?? []);
+    } catch {
+      toast.error('Failed to load courier settings');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const openConnect = (slug) => {
+    setConnectForm(slug);
+    setEditTarget(null);
+    setForm({ apiKey: '', pickupPincode: '' });
+  };
+
+  const openEdit = (courier) => {
+    setEditTarget(courier._id);
+    setConnectForm(null);
+    setForm({ apiKey: '', pickupPincode: courier.settings?.pickupPincode || '' });
+  };
+
+  const closeForm = () => { setConnectForm(null); setEditTarget(null); };
+
+  const handleConnect = async (slug, name) => {
+    if (!form.apiKey.trim()) { toast.error('API Key is required'); return; }
+    setSaving(true);
+    try {
+      const { data } = await api.post('/settings/couriers', {
+        name, slug,
+        apiKey: form.apiKey.trim(),
+        ...(form.pickupPincode ? { settings: { pickupPincode: form.pickupPincode } } : {}),
+      });
+      setCouriers((prev) => [...prev, data.courier]);
+      closeForm();
+      toast.success(`${name} connected!`);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to connect courier');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpdate = async (id, name) => {
+    setSaving(true);
+    try {
+      const body = {};
+      if (form.apiKey.trim())      body.apiKey   = form.apiKey.trim();
+      if (form.pickupPincode)      body.settings  = { pickupPincode: form.pickupPincode };
+      const { data } = await api.put(`/settings/couriers/${id}`, body);
+      setCouriers((prev) => prev.map((c) => c._id === id ? data.courier : c));
+      closeForm();
+      toast.success(`${name} updated!`);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to update courier');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemove = async (id, name) => {
+    if (!window.confirm(`Remove ${name}? This will disconnect it from ShipSplit.`)) return;
+    try {
+      await api.delete(`/settings/couriers/${id}`);
+      setCouriers((prev) => prev.filter((c) => c._id !== id));
+      toast.success(`${name} removed.`);
+    } catch {
+      toast.error('Failed to remove courier. Try again.');
+    }
+  };
+
   return (
     <div className="space-y-3">
-      {COURIERS_LIST.map((c) => (
-        <div key={c.id} className={`flex items-center gap-4 p-4 rounded-xl border transition-all
-          ${c.connected ? 'border-success-200 bg-success-50/20' : 'border-gray-200'}`}>
-          <div className="h-10 w-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center text-xl flex-shrink-0">
-            {c.logo}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-sm text-gray-900">{c.name}</span>
-              {c.connected
-                ? <span className="badge-green text-2xs">Connected</span>
-                : <span className="badge-gray text-2xs">Not Connected</span>}
+      {COURIERS_LIST.map((c) => {
+        const saved      = couriers.find((x) => x.slug === c.id && x.isActive);
+        const isConnected = !!saved;
+        const showConnect = connectForm === c.id;
+        const showEdit    = editTarget   === saved?._id;
+
+        return (
+          <div key={c.id}>
+            {/* ── Row ── */}
+            <div className={`flex items-center gap-4 p-4 rounded-xl border transition-all
+              ${isConnected ? 'border-success-200 bg-success-50/20' : 'border-gray-200'}`}>
+              <div className="h-10 w-10 rounded-xl bg-white border border-gray-200 flex items-center justify-center text-xl flex-shrink-0">
+                {c.logo}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm text-gray-900">{c.name}</span>
+                  {loading ? (
+                    <div className="h-4 w-16 bg-gray-100 rounded animate-pulse" />
+                  ) : isConnected ? (
+                    <span className="badge-green text-2xs">Connected</span>
+                  ) : (
+                    <span className="badge-gray text-2xs">Not Connected</span>
+                  )}
+                </div>
+                {isConnected ? (
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    API Key: ••••••••{saved._id.slice(-4)}
+                    {saved.settings?.pickupPincode ? ` · Pickup PIN: ${saved.settings.pickupPincode}` : ''}
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-0.5">Add API key to connect · Coverage: {c.zones}</p>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {isConnected && (
+                  <button onClick={() => showEdit ? closeForm() : openEdit(saved)} className="btn-ghost btn-sm text-gray-400">
+                    <PencilSquareIcon className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {isConnected ? (
+                  <button onClick={() => handleRemove(saved._id, c.name)} className="btn-secondary btn-sm text-red-600 border-red-200 hover:bg-red-50">
+                    Remove
+                  </button>
+                ) : (
+                  <button onClick={() => showConnect ? closeForm() : openConnect(c.id)} className="btn-primary btn-sm">
+                    + Connect
+                  </button>
+                )}
+              </div>
             </div>
-            {c.connected ? (
-              <p className="text-xs text-gray-400 font-mono mt-0.5">{c.apiKey}</p>
-            ) : (
-              <p className="text-xs text-gray-400 mt-0.5">Add API key to connect · Coverage: {c.zones}</p>
+
+            {/* ── Connect form ── */}
+            {showConnect && (
+              <div className="mt-2 p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-3">
+                <p className="text-xs font-semibold text-gray-700">Connect {c.name}</p>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="form-label text-xs">API Key <span className="text-red-500">*</span></label>
+                    <input className="form-input text-xs font-mono" placeholder="Your courier API key" value={form.apiKey} onChange={(e) => upd('apiKey', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label text-xs">Pickup Pincode <span className="text-gray-400 font-normal">(optional)</span></label>
+                    <input className="form-input text-xs" placeholder="e.g. 302001" maxLength={6} value={form.pickupPincode} onChange={(e) => upd('pickupPincode', e.target.value)} />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleConnect(c.id, c.name)} disabled={saving} className="btn-primary btn-sm">
+                    {saving ? 'Saving…' : 'Save & Connect'}
+                  </button>
+                  <button onClick={closeForm} className="btn-ghost btn-sm">Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {/* ── Edit form ── */}
+            {showEdit && (
+              <div className="mt-2 p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-3">
+                <p className="text-xs font-semibold text-gray-700">Update {c.name}</p>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="form-label text-xs">New API Key <span className="text-gray-400 font-normal">(leave blank to keep existing)</span></label>
+                    <input className="form-input text-xs font-mono" placeholder="Enter new key to replace" value={form.apiKey} onChange={(e) => upd('apiKey', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label text-xs">Pickup Pincode</label>
+                    <input className="form-input text-xs" placeholder="e.g. 302001" maxLength={6} value={form.pickupPincode} onChange={(e) => upd('pickupPincode', e.target.value)} />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleUpdate(saved._id, c.name)} disabled={saving} className="btn-primary btn-sm">
+                    {saving ? 'Saving…' : 'Update'}
+                  </button>
+                  <button onClick={closeForm} className="btn-ghost btn-sm">Cancel</button>
+                </div>
+              </div>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {c.connected && (
-              <button className="btn-ghost btn-sm text-gray-400">
-                <PencilSquareIcon className="h-3.5 w-3.5" />
-              </button>
-            )}
-            <button className={c.connected ? 'btn-secondary btn-sm text-red-600 border-red-200 hover:bg-red-50' : 'btn-primary btn-sm'}>
-              {c.connected ? 'Remove' : '+ Connect'}
-            </button>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -481,7 +713,28 @@ function LabelSettingsTab() {
     autoGenerate: false,
   });
   const upd = (k, v) => setDefaults((d) => ({ ...d, [k]: v }));
-  const [saved, setSaved] = useState(false);
+  const [saved,   setSaved]   = useState(false);
+  const [saving,  setSaving]  = useState(false);
+
+  useEffect(() => {
+    api.get('/settings')
+      .then(({ data }) => { if (data?.labelDefaults) setDefaults((d) => ({ ...d, ...data.labelDefaults })); })
+      .catch(() => {});
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.put('/settings/label-defaults', defaults);
+      setSaved(true);
+      toast.success('Label defaults saved');
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to save label defaults');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -532,8 +785,8 @@ function LabelSettingsTab() {
             <input className="form-input uppercase" placeholder="22AAAAA0000A1Z5" value={defaults.returnGST} onChange={(e) => upd('returnGST', e.target.value.toUpperCase())} />
           </div>
         </div>
-        <button onClick={() => { setSaved(true); setTimeout(() => setSaved(false), 2500); }} className={`mt-4 btn-primary btn-sm ${saved ? '!bg-success-600' : ''}`}>
-          {saved ? <><CheckCircleSolid className="h-3.5 w-3.5" />Saved!</> : 'Save Label Defaults'}
+        <button onClick={handleSave} disabled={saving} className={`mt-4 btn-primary btn-sm ${saved ? '!bg-success-600' : ''}`}>
+          {saving ? 'Saving…' : saved ? <><CheckCircleSolid className="h-3.5 w-3.5" />Saved!</> : 'Save Label Defaults'}
         </button>
       </Section>
     </div>
@@ -542,11 +795,20 @@ function LabelSettingsTab() {
 
 /* ── Billing / subscription tab ──────────────────────── */
 function BillingTab() {
+  const { data: sub,      isLoading: subLoading  } = useSubscription();
+  const { data: invoices, isLoading: invLoading  } = useInvoices();
+
+  const planName    = sub?.plan        ?? 'Free';
+  const ordersUsed  = sub?.ordersUsed  ?? 0;
+  const orderLimit  = sub?.orderLimit  ?? 50;
+  const renewsAt    = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : null;
+  const usagePct    = orderLimit > 0 ? Math.min(100, Math.round((ordersUsed / orderLimit) * 100)) : 0;
+
   const PLANS = [
-    { id: 'free',    name: 'Free',    price: '₹0',     orders: '50/mo',       current: false },
-    { id: 'starter', name: 'Starter', price: '₹499',   orders: '500/mo',      current: false },
-    { id: 'growth',  name: 'Growth',  price: '₹1,299', orders: '2,000/mo',    current: true  },
-    { id: 'pro',     name: 'Pro',     price: '₹2,999', orders: 'Unlimited',   current: false },
+    { id: 'free',    name: 'Free',    price: '₹0',     orders: '50/mo'      },
+    { id: 'starter', name: 'Starter', price: '₹499',   orders: '500/mo'     },
+    { id: 'growth',  name: 'Growth',  price: '₹1,299', orders: '2,000/mo'   },
+    { id: 'pro',     name: 'Pro',     price: '₹2,999', orders: 'Unlimited'  },
   ];
 
   return (
@@ -555,68 +817,90 @@ function BillingTab() {
       <div className="flex items-start justify-between gap-4 p-5 rounded-xl bg-gradient-to-r from-primary-600 to-primary-700 text-white">
         <div>
           <p className="text-xs font-semibold opacity-70 uppercase tracking-wider">Current Plan</p>
-          <p className="text-2xl font-extrabold mt-0.5">Growth</p>
-          <p className="text-sm opacity-80 mt-1">₹1,299/month · Renews May 10, 2026</p>
+          {subLoading
+            ? <div className="mt-1 h-7 w-24 bg-white/20 rounded animate-pulse" />
+            : <p className="text-2xl font-extrabold mt-0.5 capitalize">{planName}</p>}
+          {renewsAt && <p className="text-sm opacity-80 mt-1">Renews {renewsAt}</p>}
         </div>
         <div className="text-right">
           <p className="text-xs opacity-70">Usage this month</p>
-          <p className="text-lg font-bold mt-0.5">1,247 / 2,000</p>
+          {subLoading
+            ? <div className="mt-1 h-6 w-28 bg-white/20 rounded animate-pulse" />
+            : <p className="text-lg font-bold mt-0.5">{ordersUsed.toLocaleString('en-IN')} / {orderLimit === 999999 ? '∞' : orderLimit.toLocaleString('en-IN')}</p>}
           <div className="h-1.5 w-32 bg-white/20 rounded-full mt-1.5">
-            <div className="h-full bg-white rounded-full" style={{ width: '62%' }} />
+            <div className="h-full bg-white rounded-full transition-all" style={{ width: `${usagePct}%` }} />
           </div>
-          <p className="text-xs opacity-60 mt-1">62% used</p>
+          <p className="text-xs opacity-60 mt-1">{usagePct}% used</p>
         </div>
       </div>
 
       {/* Plan cards */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {PLANS.map((plan) => (
-          <div key={plan.id} className={`rounded-xl border-2 p-4 ${plan.current ? 'border-primary-500 bg-primary-50/40' : 'border-gray-200'}`}>
-            <p className="font-bold text-gray-900">{plan.name}</p>
-            <p className="text-xl font-extrabold text-gray-900 mt-1">{plan.price}<span className="text-xs font-normal text-gray-400">/mo</span></p>
-            <p className="text-xs text-gray-500 mt-1">{plan.orders}</p>
-            <button className={`w-full mt-3 btn-sm ${plan.current ? 'btn-secondary opacity-60 cursor-default' : 'btn-outline-primary'}`} disabled={plan.current}>
-              {plan.current ? 'Current' : `Switch`}
-            </button>
-          </div>
-        ))}
+        {PLANS.map((plan) => {
+          const isCurrent = planName.toLowerCase() === plan.id;
+          return (
+            <div key={plan.id} className={`rounded-xl border-2 p-4 ${isCurrent ? 'border-primary-500 bg-primary-50/40' : 'border-gray-200'}`}>
+              <p className="font-bold text-gray-900">{plan.name}</p>
+              <p className="text-xl font-extrabold text-gray-900 mt-1">{plan.price}<span className="text-xs font-normal text-gray-400">/mo</span></p>
+              <p className="text-xs text-gray-500 mt-1">{plan.orders}</p>
+              <button
+                className={`w-full mt-3 btn-sm ${isCurrent ? 'btn-secondary opacity-60 cursor-default' : 'btn-outline-primary'}`}
+                disabled={isCurrent}
+                onClick={() => !isCurrent && window.location.assign('/dashboard/billing')}
+              >
+                {isCurrent ? 'Current' : 'Switch'}
+              </button>
+            </div>
+          );
+        })}
       </div>
 
       {/* Invoice history */}
       <Section title="Invoice History" desc="Your recent billing history.">
-        <div className="space-y-2">
-          {[
-            { date: 'Apr 10, 2026', plan: 'Growth', amount: '₹1,299', status: 'Paid' },
-            { date: 'Mar 10, 2026', plan: 'Growth', amount: '₹1,299', status: 'Paid' },
-            { date: 'Feb 10, 2026', plan: 'Starter', amount: '₹499',  status: 'Paid' },
-          ].map((inv, i) => (
-            <div key={i} className="flex items-center justify-between py-2.5 border-b border-gray-50 last:border-0">
-              <div>
-                <p className="text-sm font-medium text-gray-800">{inv.plan} Plan</p>
-                <p className="text-xs text-gray-400">{inv.date}</p>
+        {invLoading ? (
+          <div className="space-y-2">
+            {[1,2,3].map((i) => <div key={i} className="h-10 bg-gray-50 rounded-lg animate-pulse" />)}
+          </div>
+        ) : !invoices?.length ? (
+          <p className="text-sm text-gray-400 py-4 text-center">No invoices yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {invoices.map((inv, i) => (
+              <div key={i} className="flex items-center justify-between py-2.5 border-b border-gray-50 last:border-0">
+                <div>
+                  <p className="text-sm font-medium text-gray-800 capitalize">{inv.plan ?? inv.description ?? 'Plan'}</p>
+                  <p className="text-xs text-gray-400">{inv.date ? new Date(inv.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="font-semibold text-sm text-gray-900">₹{Number(inv.amount ?? 0).toLocaleString('en-IN')}</span>
+                  <span className="badge-green">{inv.status ?? 'Paid'}</span>
+                  {inv.receiptUrl && (
+                    <a href={inv.receiptUrl} target="_blank" rel="noreferrer" className="text-xs text-primary-600 hover:text-primary-700 font-medium">Download</a>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className="font-semibold text-sm text-gray-900">{inv.amount}</span>
-                <span className="badge-green">{inv.status}</span>
-                <button className="text-xs text-primary-600 hover:text-primary-700 font-medium">Download</button>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </Section>
     </div>
   );
 }
 
 /* ── Team tab ────────────────────────────────────────── */
-function TeamTab() {
+function TeamTab({ user }) {
+  const joinedDate = user?.createdAt
+    ? new Date(user.createdAt).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })
+    : '—';
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-gray-500">3 active members · 1 pending invite</p>
-        </div>
-        <button className="btn-primary btn-sm gap-1.5">
+        <p className="text-sm text-gray-500">1 active member</p>
+        <button
+          onClick={() => toast('Team invite coming soon!', { icon: '🔜' })}
+          className="btn-primary btn-sm gap-1.5"
+        >
           <PlusIcon className="h-3.5 w-3.5" />
           Invite Member
         </button>
@@ -630,41 +914,25 @@ function TeamTab() {
               <th className="table-th">Role</th>
               <th className="table-th">Status</th>
               <th className="table-th">Joined</th>
-              <th className="table-th w-10"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {TEAM_MEMBERS.map((m) => (
-              <tr key={m.id} className="table-row">
-                <td className="table-td">
-                  <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-sm flex-shrink-0">
-                      {m.avatar}
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900">{m.name}</p>
-                      <p className="text-xs text-gray-400">{m.email}</p>
-                    </div>
+            <tr className="table-row">
+              <td className="table-td">
+                <div className="flex items-center gap-3">
+                  <div className="h-8 w-8 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-sm flex-shrink-0">
+                    {(user?.name || user?.email || 'U')[0].toUpperCase()}
                   </div>
-                </td>
-                <td className="table-td">
-                  <span className={ROLE_BADGE[m.role]}>{m.role}</span>
-                </td>
-                <td className="table-td">
-                  <span className={m.status === 'active' ? 'badge-green' : 'badge-orange'}>
-                    {m.status === 'active' ? 'Active' : 'Invited'}
-                  </span>
-                </td>
-                <td className="table-td text-xs text-gray-400">{m.joined}</td>
-                <td className="table-td">
-                  {m.role !== 'Owner' && (
-                    <button className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors">
-                      <TrashIcon className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">{user?.name || '—'}</p>
+                    <p className="text-xs text-gray-400">{user?.email || '—'}</p>
+                  </div>
+                </div>
+              </td>
+              <td className="table-td"><span className="badge-blue">Owner</span></td>
+              <td className="table-td"><span className="badge-green">Active</span></td>
+              <td className="table-td text-xs text-gray-400">{joinedDate}</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -672,8 +940,8 @@ function TeamTab() {
       <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl border border-gray-200">
         <UsersIcon className="h-5 w-5 text-gray-400 flex-shrink-0 mt-0.5" />
         <div className="text-xs text-gray-600">
-          <p className="font-semibold mb-0.5">Role Permissions</p>
-          <p><strong>Owner:</strong> Full access · <strong>Manager:</strong> All except billing · <strong>Operator:</strong> Orders & labels · <strong>Viewer:</strong> Read only</p>
+          <p className="font-semibold mb-0.5">Team Members — Coming Soon</p>
+          <p>Multi-user team access with role-based permissions will be available in a future update.</p>
         </div>
       </div>
     </div>
@@ -723,7 +991,7 @@ export default function SettingsPage() {
           {tab === 'couriers'  && <CouriersTab />}
           {tab === 'labels'    && <LabelSettingsTab />}
           {tab === 'billing'   && <BillingTab />}
-          {tab === 'team'      && <TeamTab />}
+          {tab === 'team'      && <TeamTab user={user} />}
         </div>
       </div>
     </div>
