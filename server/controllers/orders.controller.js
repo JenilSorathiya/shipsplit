@@ -253,7 +253,8 @@ exports.downloadOrderLabel = async (req, res, next) => {
       return next(AppError.badRequest('No label available for this order. Accept the order first.'));
     }
 
-    const isSandbox = process.env.AMAZON_SANDBOX === 'true';
+    const isSandbox = process.env.AMAZON_SANDBOX === 'true'
+                   || order.shipmentId?.startsWith('SANDBOX-');
     const amazonSvc = require('../services/amazon.service');
     let pdfBuffer;
 
@@ -323,18 +324,16 @@ exports.bulkDownloadLabels = async (req, res, next) => {
       return next(AppError.badRequest('No label-ready orders found in the selection'));
     }
 
-    const isSandbox = process.env.AMAZON_SANDBOX === 'true';
-    const amazonSvc = require('../services/amazon.service');
+    const envSandbox = process.env.AMAZON_SANDBOX === 'true';
+    const amazonSvc  = require('../services/amazon.service');
 
-    // Production: load platform doc once for all orders
+    // Production: load platform doc once (only needed if any order is non-sandbox)
     let platformDoc = null;
-    if (!isSandbox) {
+    if (!envSandbox) {
       platformDoc = await Platform
         .findOne({ userId: req.user._id, platformName: 'amazon', isConnected: true })
         .select('+_accessToken +_refreshToken');
-      if (!platformDoc) {
-        return next(AppError.badRequest('Amazon account is not connected'));
-      }
+      // Note: not blocking here — individual orders will skip if no platform
     }
 
     // Fetch each label PDF buffer
@@ -345,13 +344,16 @@ exports.bulkDownloadLabels = async (req, res, next) => {
     for (const order of orders) {
       try {
         let pdfBuffer;
-        if (isSandbox) {
+        // Use sandbox generator if env flag is set OR if this order was created in sandbox
+        const orderIsSandbox = envSandbox || order.shipmentId?.startsWith('SANDBOX-');
+        if (orderIsSandbox) {
           pdfBuffer = await amazonSvc.generateSandboxLabelPDF(
             order.toObject(),
             order.awb || `AMZL${order._id}IN`
           );
         } else {
           if (!order.shipmentId) continue; // skip if no shipment yet
+          if (!platformDoc) continue;      // skip if Amazon not connected
           const result = await amazonSvc.fetchShippingLabel(platformDoc, order.shipmentId);
           pdfBuffer = result.buffer;
         }
