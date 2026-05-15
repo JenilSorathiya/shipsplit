@@ -1,4 +1,5 @@
 // Load .env in development; in production Render injects env vars directly
+// Last deploy trigger: 2026-05-15
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 }
