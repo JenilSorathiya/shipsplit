@@ -286,9 +286,35 @@ export default function OrdersPage() {
 
   const switchTab = (key) => { setActiveTab(key); setSelected(new Set()); setPage(1); setSearch(''); };
 
+  /* ── Read real error message from a Blob response ───────────────── */
+  const readBlobError = async (err) => {
+    if (err.response?.data instanceof Blob) {
+      try {
+        const text = await err.response.data.text();
+        const json = JSON.parse(text);
+        return json.message || `Server error ${err.response.status}`;
+      } catch {
+        return `Server error ${err.response?.status || ''}`;
+      }
+    }
+    return err.response?.data?.message || err.message || 'Request failed';
+  };
+
   /* ── Label helpers ───────────────────────────────────────────────── */
   const triggerSingleLabel = async (orderId, orderIdStr) => {
-    const resp = await api.get(`/orders/${orderId}/label`, { responseType: 'blob' });
+    let resp;
+    try {
+      resp = await api.get(`/orders/${orderId}/label`, { responseType: 'blob' });
+    } catch (err) {
+      const msg = await readBlobError(err);
+      throw new Error(msg);
+    }
+    // Make sure we got a PDF not an error JSON
+    if (resp.headers?.['content-type']?.includes('application/json')) {
+      const text = await resp.data.text();
+      const json = JSON.parse(text);
+      throw new Error(json.message || 'Label not available');
+    }
     const match = (resp.headers?.['content-disposition'] || '').match(/filename="?([^"]+)"?/);
     const fname = match?.[1] || `label_${orderIdStr || orderId}.pdf`;
     const url = URL.createObjectURL(resp.data);
@@ -299,7 +325,18 @@ export default function OrdersPage() {
   };
 
   const triggerBulkLabels = async (orderIds) => {
-    const resp = await api.post('/orders/bulk-label', { orderIds }, { responseType: 'blob' });
+    let resp;
+    try {
+      resp = await api.post('/orders/bulk-label', { orderIds }, { responseType: 'blob' });
+    } catch (err) {
+      const msg = await readBlobError(err);
+      throw new Error(msg);
+    }
+    if (resp.headers?.['content-type']?.includes('application/json')) {
+      const text = await resp.data.text();
+      const json = JSON.parse(text);
+      throw new Error(json.message || 'Could not generate labels');
+    }
     const url = URL.createObjectURL(resp.data);
     const a = document.createElement('a');
     a.href = url; a.download = `labels_bulk_${Date.now()}.pdf`;
@@ -328,8 +365,8 @@ export default function OrdersPage() {
     setReprintingIds((p) => new Set(p).add(orderId));
     try {
       await triggerSingleLabel(orderId, orderIdStr);
-    } catch {
-      toast.error('Could not download label — try again');
+    } catch (err) {
+      toast.error(err.message || 'Could not download label — try again');
     } finally {
       setReprintingIds((p) => { const s = new Set(p); s.delete(orderId); return s; });
     }
@@ -417,8 +454,8 @@ export default function OrdersPage() {
     try {
       await triggerBulkLabels(ids);
       toast.success(`${ids.length} label${ids.length !== 1 ? 's' : ''} downloaded as one PDF`);
-    } catch {
-      toast.error('Download failed — try again');
+    } catch (err) {
+      toast.error(err.message || 'Download failed — try again');
     } finally {
       setBulkDownloadingLabels(false);
     }
