@@ -24,9 +24,9 @@ const Order    = require('../models/Order.model');
 /* ── Constants ──────────────────────────────────────────────────────── */
 const LWA_TOKEN_URL  = 'https://api.amazon.com/auth/o2/token';
 const SP_API_BASE    = process.env.AMAZON_SANDBOX === 'true'
-  ? 'https://sandbox.sellingpartnerapi-fe.amazon.com'   // sandbox — use with self-auth tokens
-  : 'https://sellingpartnerapi-fe.amazon.com';           // production — FE region (India/JP/AU)
-const AWS_REGION     = 'us-west-2';   // FE endpoint region for signing
+  ? 'https://sandbox.sellingpartnerapi-eu.amazon.com'   // sandbox — EU region (India is EU)
+  : 'https://sellingpartnerapi-eu.amazon.com';           // production — EU region (covers India IN)
+const AWS_REGION     = 'eu-west-1';   // EU endpoint signing region (India marketplace)
 const AWS_SERVICE    = 'execute-api';
 const IN_MARKETPLACE = 'A21TJRUUN4KGV'; // Amazon India marketplace ID
 
@@ -226,9 +226,16 @@ async function withRetry(fn, { retries = 3, baseDelay = 1500 } = {}) {
 
 async function spRequest({ platform, method, path, params = {}, body = null }) {
   // Build full URL with query params
+  // SP-API array params (MarketplaceIds, OrderStatuses, etc.) must be repeated:
+  //   ?OrderStatuses=Unshipped&OrderStatuses=PartiallyShipped
+  // NOT comma-joined: ?OrderStatuses=Unshipped%2CPartiallyShipped
   const urlObj = new URL(`${SP_API_BASE}${path}`);
   for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null) urlObj.searchParams.set(String(k), String(v));
+    if (v === undefined || v === null) continue;
+    const values = Array.isArray(v) ? v : String(v).split(',').map(s => s.trim());
+    for (const val of values) {
+      if (val !== '') urlObj.searchParams.append(k, val);
+    }
   }
   const fullUrl = urlObj.toString();
   const bodyStr = body ? JSON.stringify(body) : '';
