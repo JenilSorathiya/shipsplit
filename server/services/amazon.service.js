@@ -345,13 +345,14 @@ async function ensureFreshToken(platform) {
     await platform.save();
     logger.info('Amazon token refreshed successfully');
   } catch (err) {
-    const msg = err.response?.data?.error_description || err.message;
-    logger.error('Amazon token refresh failed:', msg);
+    const lwaErr = err.response?.data;
+    const msg    = lwaErr?.error_description || lwaErr?.error || err.message;
+    logger.error('Amazon token refresh failed — LWA response:', JSON.stringify(lwaErr || err.message));
     // Mark platform as needing reconnect
     platform.lastSyncStatus = 'failed';
     platform.lastSyncError  = `Token refresh failed: ${msg}`;
     await platform.save();
-    throw new Error('Amazon token expired — please reconnect your Amazon account');
+    throw new Error(`Amazon auth error: ${msg}`);
   }
 }
 

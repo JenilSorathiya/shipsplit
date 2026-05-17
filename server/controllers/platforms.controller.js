@@ -77,7 +77,7 @@ exports.handleAmazonCallback = async (req, res, next) => {
     // Save encrypted tokens
     platform.accessToken    = accessToken;
     platform.refreshToken   = refreshToken;
-    platform.tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);
+    platform.tokenExpiresAt = new Date(Date.now() + (expiresIn || 3600) * 1000);
     platform.sellerId       = selling_partner_id;
     platform.isConnected    = true;
     platform.marketplaceId  = platform.marketplaceId || 'A21TJRUUN4KGV';
