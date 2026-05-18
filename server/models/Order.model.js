@@ -110,12 +110,33 @@ const orderSchema = new mongoose.Schema({
 });
 
 /* ── Indexes ──────────────────────────────────────── */
+// Unique constraint — prevents duplicate orders per user+platform
 orderSchema.index({ userId: 1, platform: 1, orderId: 1 }, { unique: true });
-orderSchema.index({ userId: 1, status: 1 });
+
+// Tab queries: filter by status + sort by date (most common query in the app)
+orderSchema.index({ userId: 1, status: 1, createdAt: -1 });
+
+// Platform-filtered tab view (e.g. "show only Amazon pending orders")
+orderSchema.index({ userId: 1, platform: 1, status: 1, createdAt: -1 });
+
+// Dashboard stats: count by platform
 orderSchema.index({ userId: 1, platform: 1 });
+
+// Courier assignment view
 orderSchema.index({ userId: 1, courierPartner: 1 });
+
+// Default sort (newest first)
 orderSchema.index({ userId: 1, createdAt: -1 });
-orderSchema.index({ awb: 1 }, { sparse: true });
+
+// COD filter (reports page)
+orderSchema.index({ userId: 1, isCOD: 1, status: 1 });
+
+// Sparse indexes — only indexed when field exists
+orderSchema.index({ awb:           1 }, { sparse: true });
 orderSchema.index({ importBatchId: 1 }, { sparse: true });
+orderSchema.index({ platformOrderId: 1 }, { sparse: true });
+
+// Full-text search on orderId and productName
+orderSchema.index({ orderId: 'text', productName: 'text', buyerName: 'text' });
 
 module.exports = mongoose.model('Order', orderSchema);
