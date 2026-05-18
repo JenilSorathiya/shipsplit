@@ -701,157 +701,69 @@ function CouriersTab() {
   );
 }
 
-/* ── Label Size visual card ──────────────────────────── */
-const LABEL_SIZES = [
-  {
-    id: '4x6',
-    name: '4 × 6 inch',
-    sub: 'Thermal — Most Popular',
-    dims: '100 × 150 mm',
-    platforms: ['Amazon', 'Meesho'],
-    color: 'blue',
-    shape: { w: 40, h: 60 },
-    popular: true,
-  },
-  {
-    id: '3x5',
-    name: '3 × 5 inch',
-    sub: 'Flipkart New Format',
-    dims: '75 × 125 mm',
-    platforms: ['Flipkart'],
-    color: 'indigo',
-    shape: { w: 36, h: 50 },
-  },
-  {
-    id: 'A6',
-    name: 'A6',
-    sub: 'Thermal / Small Inkjet',
-    dims: '105 × 148 mm',
-    platforms: ['Meesho', 'Flipkart'],
-    color: 'violet',
-    shape: { w: 42, h: 60 },
-  },
-  {
-    id: 'A4_4',
-    name: 'A4 — 4 per page',
-    sub: 'Regular Printer',
-    dims: '210 × 297 mm  ·  2×2 grid',
-    platforms: ['Amazon', 'Flipkart', 'Meesho'],
-    color: 'emerald',
-    shape: { w: 56, h: 72 },
-    grid: '2×2',
-  },
-  {
-    id: 'A4_2',
-    name: 'A4 — 2 per page',
-    sub: 'Regular Printer',
-    dims: '210 × 297 mm  ·  1×2 grid',
-    platforms: ['Amazon', 'Flipkart', 'Meesho'],
-    color: 'teal',
-    shape: { w: 56, h: 72 },
-    grid: '1×2',
-  },
-  {
-    id: 'A4_1',
-    name: 'A4 — Full Page',
-    sub: 'Single large label',
-    dims: '210 × 297 mm',
-    platforms: ['Amazon'],
-    color: 'gray',
-    shape: { w: 56, h: 72 },
-    grid: '1×1',
-  },
-];
-
-const SIZE_COLORS = {
-  blue:   { ring: 'ring-blue-500',   bg: 'bg-blue-50',   text: 'text-blue-700',   badge: 'bg-blue-100 text-blue-700'   },
-  indigo: { ring: 'ring-indigo-500', bg: 'bg-indigo-50', text: 'text-indigo-700', badge: 'bg-indigo-100 text-indigo-700' },
-  violet: { ring: 'ring-violet-500', bg: 'bg-violet-50', text: 'text-violet-700', badge: 'bg-violet-100 text-violet-700' },
-  emerald:{ ring: 'ring-emerald-500',bg: 'bg-emerald-50',text: 'text-emerald-700',badge: 'bg-emerald-100 text-emerald-700' },
-  teal:   { ring: 'ring-teal-500',   bg: 'bg-teal-50',   text: 'text-teal-700',   badge: 'bg-teal-100 text-teal-700'   },
-  gray:   { ring: 'ring-gray-400',   bg: 'bg-gray-50',   text: 'text-gray-700',   badge: 'bg-gray-100 text-gray-600'   },
-};
-
-function LabelSizeCard({ size, selected, onSelect }) {
-  const c = SIZE_COLORS[size.color];
-  const { w, h } = size.shape;
+/* ── Printer type card ───────────────────────────────── */
+function PrinterCard({ id, icon, title, sub, examples, selected, onSelect }) {
   return (
     <button
-      onClick={() => onSelect(size.id)}
-      className={`relative flex flex-col items-center p-3 rounded-xl border-2 transition-all text-center w-full
-        ${selected ? `${c.ring} ring-2 ${c.bg} border-transparent` : 'border-gray-200 hover:border-gray-300 bg-white'}`}
+      onClick={() => onSelect(id)}
+      className={`flex-1 flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all text-center
+        ${selected ? 'border-primary-500 bg-primary-50/50 ring-2 ring-primary-200' : 'border-gray-200 hover:border-gray-300 bg-white'}`}
     >
-      {size.popular && (
-        <span className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 text-2xs font-bold bg-orange-500 text-white rounded-full whitespace-nowrap">
-          Most Used
-        </span>
-      )}
-      {/* Mini paper preview */}
-      <div className="mb-2 mt-1 flex items-center justify-center" style={{ height: 64 }}>
-        <div
-          className={`rounded border-2 ${selected ? `border-current ${c.text}` : 'border-gray-300'} relative flex items-center justify-center`}
-          style={{ width: w * 0.72, height: h * 0.72 }}
-        >
-          {size.grid === '2×2' && (
-            <div className="absolute inset-0 grid grid-cols-2 grid-rows-2 gap-px p-px opacity-30">
-              {[0,1,2,3].map(i => <div key={i} className="bg-current rounded-sm" />)}
-            </div>
-          )}
-          {size.grid === '1×2' && (
-            <div className="absolute inset-0 grid grid-cols-1 grid-rows-2 gap-px p-px opacity-30">
-              {[0,1].map(i => <div key={i} className="bg-current rounded-sm" />)}
-            </div>
-          )}
-          {(size.id === '4x6' || size.id === '3x5' || size.id === 'A6') && (
-            <div className="absolute inset-1 flex flex-col gap-0.5 opacity-25">
-              <div className="h-1.5 bg-current rounded w-3/4 mx-auto" />
-              <div className="h-px bg-current rounded w-full" />
-              <div className="h-px bg-current rounded w-2/3" />
-              <div className="h-px bg-current rounded w-1/2" />
-              <div className="mt-auto h-3 bg-current rounded w-full opacity-70" />
-            </div>
-          )}
-        </div>
+      <span className="text-3xl">{icon}</span>
+      <div>
+        <p className={`text-sm font-bold ${selected ? 'text-primary-700' : 'text-gray-800'}`}>{title}</p>
+        <p className="text-xs text-gray-500 mt-0.5">{sub}</p>
+        <p className="text-2xs text-gray-400 mt-1">{examples}</p>
       </div>
-      <p className={`text-xs font-bold ${selected ? c.text : 'text-gray-800'}`}>{size.name}</p>
-      <p className="text-2xs text-gray-500 mt-0.5">{size.sub}</p>
-      <p className="text-2xs text-gray-400 mt-0.5">{size.dims}</p>
-      <div className="flex flex-wrap gap-1 justify-center mt-1.5">
-        {size.platforms.map(p => (
-          <span key={p} className={`text-2xs px-1.5 py-0.5 rounded font-medium ${selected ? c.badge : 'bg-gray-100 text-gray-500'}`}>{p}</span>
-        ))}
-      </div>
+      {selected && <CheckCircleSolid className="h-4 w-4 text-primary-600" />}
     </button>
   );
 }
 
+/* ── Platform label size row ─────────────────────────── */
+function PlatformSizeRow({ platform, color, bg, options, value, onChange }) {
+  return (
+    <div className="flex items-center gap-4 py-3 border-b border-gray-100 last:border-0">
+      <div className={`h-9 w-9 rounded-lg ${bg} flex items-center justify-center text-white font-bold text-sm flex-shrink-0`}>
+        {platform[0]}
+      </div>
+      <div className="w-28 flex-shrink-0">
+        <p className="text-sm font-semibold text-gray-800">{platform}</p>
+      </div>
+      <div className="flex flex-wrap gap-2 flex-1">
+        {options.map(({ id, label, hint }) => (
+          <button
+            key={id}
+            onClick={() => onChange(id)}
+            className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all
+              ${value === id
+                ? 'border-primary-500 bg-primary-600 text-white'
+                : 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'}`}
+          >
+            {label}
+            {hint && <span className={`ml-1 text-2xs ${value === id ? 'text-primary-200' : 'text-gray-400'}`}>({hint})</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
 /* ── Label settings tab ──────────────────────────────── */
 function LabelSettingsTab() {
   const [s, setS] = useState({
-    // Size
-    defaultSize: '4x6',
-    // Print content
-    printContent: 'label_only',     // label_only | invoice_only | combined | separate
-    // COD
-    codBadge:     true,
-    codAmount:    true,
-    prepaidBadge: true,
-    // Return address
-    returnName:   '',
-    returnPhone:  '',
-    returnLine1:  '',
-    returnLine2:  '',
-    returnCity:   '',
-    returnState:  '',
-    returnPin:    '',
-    returnGST:    '',
-    // Brand
-    brandLogo:    false,
-    customMsg:    '',
-    // Print prefs
-    fontSize:     'medium',         // small | medium | large
-    fileFormat:   'pdf',            // pdf | zpl
-    autoGenerate: false,
+    printerType:   'thermal',   // thermal | regular
+    // per-platform download size
+    amazonSize:    '4x6',       // 4x6 | A4
+    flipkartSize:  '3x5',       // 3x5 | A4_4
+    meeshoSize:    '4x6',       // 4x6 | A4_4
+    // combined PDF handling (Meesho/Flipkart generate label+invoice on one A4)
+    splitCombined: true,        // auto-split label from invoice
+    // bulk download layout (when downloading multiple labels at once)
+    bulkLayout:    'A4_4',      // A4_4 | A4_2 | per_file
+    // auto-accept
+    autoSync:      false,
   });
 
   const upd = (k, v) => setS((d) => ({ ...d, [k]: v }));
@@ -881,236 +793,200 @@ function LabelSettingsTab() {
   return (
     <div className="space-y-5">
 
-      {/* ── 1. Label Size ─────────────────────────────── */}
-      <Section title="Label Size" desc="Choose your default size based on your printer type.">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {LABEL_SIZES.map((size) => (
-            <LabelSizeCard
-              key={size.id}
-              size={size}
-              selected={s.defaultSize === size.id}
-              onSelect={(id) => upd('defaultSize', id)}
-            />
-          ))}
+      {/* ── 1. Printer Type ───────────────────────────── */}
+      <Section
+        title="Printer Type"
+        desc="Tell ShipSplit what printer you use — this controls which label size is downloaded."
+      >
+        <div className="flex gap-3">
+          <PrinterCard
+            id="thermal"
+            icon="🖨️"
+            title="Thermal Printer"
+            sub="Direct thermal, no ink"
+            examples="TSC, Xprinter, TVS, iDPRT, Zebra"
+            selected={s.printerType === 'thermal'}
+            onSelect={(id) => upd('printerType', id)}
+          />
+          <PrinterCard
+            id="regular"
+            icon="🖨️"
+            title="Regular Printer"
+            sub="Inkjet or laser, A4 paper"
+            examples="HP, Canon, Epson, Brother"
+            selected={s.printerType === 'regular'}
+            onSelect={(id) => upd('printerType', id)}
+          />
         </div>
-        <p className="mt-3 text-xs text-gray-400 flex items-center gap-1">
-          <span className="inline-block w-2 h-2 rounded-full bg-blue-400" />
-          Most Indian sellers use <strong className="text-gray-600">4×6 inch thermal</strong> (TSC, Xprinter, TVS) or <strong className="text-gray-600">A4 4-up</strong> for regular printers.
-        </p>
+        {s.printerType === 'thermal' && (
+          <div className="mt-3 flex items-start gap-2 p-3 bg-blue-50 rounded-lg border border-blue-100">
+            <span className="text-sm">💡</span>
+            <p className="text-xs text-blue-700">
+              Thermal printers use direct heat — no ink cartridges needed. Most popular in India: <strong>TSC TE244</strong>, <strong>Xprinter XP-470B</strong>, <strong>TVS LP-46</strong>.
+              Labels come out as individual 4×6" or 3×5" slips ready to stick.
+            </p>
+          </div>
+        )}
+        {s.printerType === 'regular' && (
+          <div className="mt-3 flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+            <span className="text-sm">💡</span>
+            <p className="text-xs text-amber-700">
+              For regular printers, labels are arranged on A4 sheets. You cut and stick them.
+              Most sellers prefer <strong>4 labels per A4</strong> to save paper.
+            </p>
+          </div>
+        )}
       </Section>
 
-      {/* ── 2. Print Content ──────────────────────────── */}
-      <Section title="What to Print" desc="Choose what gets included when you download a label.">
-        <div className="grid sm:grid-cols-2 gap-3">
+      {/* ── 2. Per-Platform Label Size ────────────────── */}
+      <Section
+        title="Label Size per Platform"
+        desc="Each marketplace generates labels in different formats. Set your preferred download size."
+      >
+        <div className="divide-y divide-gray-100">
+          {/* Amazon */}
+          <PlatformSizeRow
+            platform="Amazon"
+            bg="bg-[#FF9900]"
+            value={s.amazonSize}
+            onChange={(v) => upd('amazonSize', v)}
+            options={[
+              { id: '4x6', label: '4×6"', hint: 'thermal' },
+              { id: 'A4',  label: 'A4',   hint: 'regular printer' },
+            ]}
+          />
+          {/* Flipkart */}
+          <PlatformSizeRow
+            platform="Flipkart"
+            bg="bg-[#2874F0]"
+            value={s.flipkartSize}
+            onChange={(v) => upd('flipkartSize', v)}
+            options={[
+              { id: '3x5',  label: '3×5"',     hint: 'new format' },
+              { id: 'A4_4', label: 'A4 (4-up)', hint: 'regular printer' },
+            ]}
+          />
+          {/* Meesho */}
+          <PlatformSizeRow
+            platform="Meesho"
+            bg="bg-[#F43397]"
+            value={s.meeshoSize}
+            onChange={(v) => upd('meeshoSize', v)}
+            options={[
+              { id: '4x6',  label: '4×6" / A6', hint: 'thermal' },
+              { id: 'A4_4', label: 'A4 (4-up)',  hint: 'regular printer' },
+            ]}
+          />
+        </div>
+        <div className="mt-3 flex items-start gap-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
+          <span className="text-sm">ℹ️</span>
+          <p className="text-xs text-gray-600">
+            Labels are generated by each marketplace — ShipSplit downloads them as-is and arranges
+            them for your printer. Flipkart switched to <strong>3×5 inch</strong> labels in 2023.
+          </p>
+        </div>
+      </Section>
+
+      {/* ── 3. Combined PDF Handling ──────────────────── */}
+      <Section
+        title="Combined Label + Invoice PDF"
+        desc="Meesho and Flipkart generate a single A4 PDF with the label on one half and invoice on the other."
+      >
+        {/* Visual explainer */}
+        <div className="flex gap-3 mb-4">
+          <div className="flex-1 border border-gray-200 rounded-lg overflow-hidden text-center text-xs">
+            <div className="bg-blue-50 border-b border-dashed border-blue-200 px-3 py-4 text-blue-700 font-medium">
+              🧾 Invoice
+            </div>
+            <div className="bg-orange-50 px-3 py-4 text-orange-700 font-medium">
+              🏷️ Shipping Label
+            </div>
+            <div className="px-2 py-1.5 bg-gray-50 text-gray-400 text-2xs">
+              Combined A4 (what Meesho/Flipkart give you)
+            </div>
+          </div>
+          <div className="flex items-center text-gray-400 text-lg">→</div>
+          <div className="flex-1 flex flex-col gap-2">
+            <div className="border border-orange-200 rounded-lg px-3 py-3 bg-orange-50 text-center text-xs text-orange-700 font-medium">
+              🏷️ Label only
+            </div>
+            <div className="border border-blue-200 rounded-lg px-3 py-3 bg-blue-50 text-center text-xs text-blue-700 font-medium">
+              🧾 Invoice only
+            </div>
+            <div className="px-2 py-1 bg-gray-50 rounded text-gray-400 text-2xs text-center">
+              After ShipSplit splits it
+            </div>
+          </div>
+        </div>
+
+        <div className={`flex items-center justify-between p-3.5 rounded-xl border transition-all
+          ${s.splitCombined ? 'border-primary-200 bg-primary-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
+          <div>
+            <p className="text-sm font-medium text-gray-800">Auto-split label from invoice</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              ShipSplit separates the label half automatically — you get a clean label ready to print
+            </p>
+          </div>
+          <Toggle checked={!!s.splitCombined} onChange={(v) => upd('splitCombined', v)} />
+        </div>
+        {!s.splitCombined && (
+          <p className="mt-2 text-xs text-amber-600 flex items-center gap-1">
+            <ExclamationTriangleIcon className="h-3.5 w-3.5" />
+            Combined PDF downloaded as-is — you'll need to cut it manually before printing on thermal.
+          </p>
+        )}
+      </Section>
+
+      {/* ── 4. Bulk Download Layout ───────────────────── */}
+      <Section
+        title="Bulk Download Layout"
+        desc="When you download multiple labels at once, how should they be arranged in the PDF?"
+      >
+        <div className="grid grid-cols-3 gap-3">
           {[
-            { id: 'label_only',  icon: '🏷️', title: 'Label Only',              desc: 'Just the shipping label. Print invoice separately.' },
-            { id: 'invoice_only',icon: '🧾', title: 'Invoice Only',             desc: 'Tax invoice only. Useful for batch invoice printing.' },
-            { id: 'combined',    icon: '📄', title: 'Label + Invoice (Same Page)', desc: 'Combined A4 — cut in half. Label on bottom, invoice on top.' },
-            { id: 'separate',    icon: '📋', title: 'Label + Invoice (Separate)',  desc: 'Two separate PDFs — ideal for high-volume sellers.' },
-          ].map(({ id, icon, title, desc }) => (
+            {
+              id: 'A4_4',
+              icon: '▦',
+              label: '4 per A4',
+              sub: '2×2 grid — saves paper',
+              best: 'Regular printer',
+            },
+            {
+              id: 'A4_2',
+              icon: '▤',
+              label: '2 per A4',
+              sub: '1×2 layout — larger labels',
+              best: 'Regular printer',
+            },
+            {
+              id: 'per_file',
+              icon: '🏷',
+              label: '1 per file',
+              sub: 'Each label separate',
+              best: 'Thermal printer',
+            },
+          ].map(({ id, icon, label, sub, best }) => (
             <button
               key={id}
-              onClick={() => upd('printContent', id)}
-              className={`flex items-start gap-3 p-3.5 rounded-xl border-2 text-left transition-all
-                ${s.printContent === id ? 'border-primary-500 bg-primary-50/50 ring-2 ring-primary-200' : 'border-gray-200 hover:border-gray-300'}`}
+              onClick={() => upd('bulkLayout', id)}
+              className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all text-center
+                ${s.bulkLayout === id
+                  ? 'border-primary-500 bg-primary-50/50 ring-2 ring-primary-200'
+                  : 'border-gray-200 hover:border-gray-300 bg-white'}`}
             >
-              <span className="text-xl mt-0.5">{icon}</span>
-              <div>
-                <p className={`text-sm font-semibold ${s.printContent === id ? 'text-primary-700' : 'text-gray-800'}`}>{title}</p>
-                <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
-              </div>
-              {s.printContent === id && (
-                <CheckCircleSolid className="h-4 w-4 text-primary-600 ml-auto flex-shrink-0 mt-0.5" />
-              )}
+              <span className="text-2xl">{icon}</span>
+              <p className={`text-sm font-bold ${s.bulkLayout === id ? 'text-primary-700' : 'text-gray-800'}`}>{label}</p>
+              <p className="text-2xs text-gray-500">{sub}</p>
+              <span className={`text-2xs px-1.5 py-0.5 rounded font-medium mt-0.5
+                ${s.bulkLayout === id ? 'bg-primary-100 text-primary-700' : 'bg-gray-100 text-gray-500'}`}>
+                {best}
+              </span>
             </button>
           ))}
         </div>
       </Section>
 
-      {/* ── 3. COD & Prepaid ──────────────────────────── */}
-      <Section title="COD & Prepaid Labels" desc="India has 60%+ COD orders — make them impossible to miss.">
-        <div className="space-y-3">
-          {[
-            {
-              key: 'codBadge',
-              label: 'Show red COD badge on labels',
-              desc: 'Prints a bold red "CASH ON DELIVERY" badge — delivery agents scan for this first',
-              recommended: true,
-            },
-            {
-              key: 'codAmount',
-              label: 'Print COD amount on label',
-              desc: 'Shows "COD: ₹XXX" so the delivery agent knows exactly how much to collect',
-              recommended: true,
-            },
-            {
-              key: 'prepaidBadge',
-              label: 'Show PREPAID marker on prepaid orders',
-              desc: 'Clearly marks non-COD orders so agents don\'t attempt cash collection',
-              recommended: true,
-            },
-          ].map(({ key, label, desc, recommended }) => (
-            <div key={key} className={`flex items-center justify-between p-3.5 rounded-xl border transition-all
-              ${s[key] ? 'border-success-200 bg-success-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
-              <div className="flex-1 min-w-0 pr-4">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-gray-800">{label}</p>
-                  {recommended && <span className="text-2xs px-1.5 py-0.5 rounded bg-orange-100 text-orange-600 font-semibold">Recommended</span>}
-                </div>
-                <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
-              </div>
-              <Toggle checked={!!s[key]} onChange={(v) => upd(key, v)} />
-            </div>
-          ))}
-        </div>
-        {/* Visual preview hint */}
-        {s.codBadge && (
-          <div className="mt-3 p-3 rounded-lg bg-gray-50 border border-gray-200 flex items-center gap-3">
-            <div className="flex-shrink-0 px-3 py-1.5 bg-red-600 rounded text-white text-xs font-bold">CASH ON DELIVERY</div>
-            {s.codAmount && <div className="text-sm font-bold text-gray-800">₹ 499</div>}
-            <p className="text-xs text-gray-400 ml-auto">Preview</p>
-          </div>
-        )}
-      </Section>
-
-      {/* ── 4. Return / Sender Address ────────────────── */}
-      <Section
-        title="Return Address"
-        desc="Where failed deliveries (RTO) come back to. This may differ from your GST-registered address."
-      >
-        <div className="grid sm:grid-cols-2 gap-4">
-          <div>
-            <label className="form-label">Business / Store Name</label>
-            <input className="form-input" placeholder="StyleKart" value={s.returnName} onChange={(e) => upd('returnName', e.target.value)} />
-          </div>
-          <div>
-            <label className="form-label">Contact Phone</label>
-            <input className="form-input" placeholder="9876543210" maxLength={10} value={s.returnPhone} onChange={(e) => upd('returnPhone', e.target.value)} />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="form-label">Address Line 1</label>
-            <input className="form-input" placeholder="Shop 12, Gandhi Nagar" value={s.returnLine1} onChange={(e) => upd('returnLine1', e.target.value)} />
-          </div>
-          <div className="sm:col-span-2">
-            <label className="form-label">Address Line 2 <span className="text-gray-400 font-normal">(optional)</span></label>
-            <input className="form-input" placeholder="Near Bus Stand" value={s.returnLine2} onChange={(e) => upd('returnLine2', e.target.value)} />
-          </div>
-          <div>
-            <label className="form-label">City</label>
-            <input className="form-input" placeholder="Jaipur" value={s.returnCity} onChange={(e) => upd('returnCity', e.target.value)} />
-          </div>
-          <div>
-            <label className="form-label">State</label>
-            <input className="form-input" placeholder="Rajasthan" value={s.returnState} onChange={(e) => upd('returnState', e.target.value)} />
-          </div>
-          <div>
-            <label className="form-label">Pincode</label>
-            <input className="form-input" placeholder="302001" maxLength={6} value={s.returnPin} onChange={(e) => upd('returnPin', e.target.value.replace(/\D/g, ''))} />
-          </div>
-          <div>
-            <label className="form-label">GSTIN <span className="text-gray-400 font-normal">(optional)</span></label>
-            <input className="form-input uppercase" placeholder="22AAAAA0000A1Z5" maxLength={15} value={s.returnGST} onChange={(e) => upd('returnGST', e.target.value.toUpperCase())} />
-          </div>
-        </div>
-        <div className="mt-3 flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
-          <ExclamationTriangleIcon className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-700">India's RTO rate is 15–25%. Make sure this address is your actual warehouse/pickup location, not a virtual office.</p>
-        </div>
-      </Section>
-
-      {/* ── 5. Branding ───────────────────────────────── */}
-      <Section title="Branding" desc="Logo and custom message for your labels.">
-        <div className="space-y-4">
-          <div className={`flex items-center justify-between p-3.5 rounded-xl border transition-all
-            ${s.brandLogo ? 'border-primary-200 bg-primary-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
-            <div>
-              <p className="text-sm font-medium text-gray-800">Show brand logo on labels</p>
-              <p className="text-xs text-gray-400 mt-0.5">Appears on ShipSplit-generated labels and packing slips</p>
-            </div>
-            <Toggle checked={!!s.brandLogo} onChange={(v) => upd('brandLogo', v)} />
-          </div>
-          <div>
-            <label className="form-label">Custom Message to Customer <span className="text-gray-400 font-normal">(optional)</span></label>
-            <input
-              className="form-input"
-              placeholder="Thank you for your order! 🎉"
-              maxLength={80}
-              value={s.customMsg}
-              onChange={(e) => upd('customMsg', e.target.value)}
-            />
-            <p className="form-hint">{s.customMsg.length}/80 chars — printed at the bottom of the label</p>
-          </div>
-          <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg border border-blue-100">
-            <span className="text-blue-500 text-sm">ℹ️</span>
-            <p className="text-xs text-blue-700">
-              <strong>Note:</strong> Meesho prohibits seller branding on packaging. Amazon and Flipkart labels are carrier-generated — logo applies only to ShipSplit-generated labels and packing slips.
-            </p>
-          </div>
-        </div>
-      </Section>
-
-      {/* ── 6. Print Preferences ──────────────────────── */}
-      <Section title="Print Preferences" desc="Fine-tune how your labels look and which format to use.">
-        <div className="space-y-5">
-
-          {/* Font size */}
-          <div>
-            <label className="form-label">Address Font Size</label>
-            <div className="flex gap-3 mt-1">
-              {[
-                { id: 'small',  label: 'Small',  sub: '~8pt — fits more text' },
-                { id: 'medium', label: 'Medium', sub: '~10pt — recommended'  },
-                { id: 'large',  label: 'Large',  sub: '~12pt — easy to read' },
-              ].map(({ id, label, sub }) => (
-                <button
-                  key={id}
-                  onClick={() => upd('fontSize', id)}
-                  className={`flex-1 py-2.5 px-3 rounded-xl border-2 text-center transition-all
-                    ${s.fontSize === id ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-200' : 'border-gray-200 hover:border-gray-300'}`}
-                >
-                  <p className={`text-sm font-semibold ${s.fontSize === id ? 'text-primary-700' : 'text-gray-700'}`}>{label}</p>
-                  <p className="text-2xs text-gray-400 mt-0.5">{sub}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* File format */}
-          <div>
-            <label className="form-label">File Format</label>
-            <div className="flex gap-3 mt-1">
-              {[
-                { id: 'pdf', label: 'PDF', sub: 'All printers — recommended', badge: 'Default' },
-                { id: 'zpl', label: 'ZPL', sub: 'Zebra / TSC printers only', badge: 'Advanced' },
-              ].map(({ id, label, sub, badge }) => (
-                <button
-                  key={id}
-                  onClick={() => upd('fileFormat', id)}
-                  className={`flex-1 py-2.5 px-3 rounded-xl border-2 text-center transition-all relative
-                    ${s.fileFormat === id ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-200' : 'border-gray-200 hover:border-gray-300'}`}
-                >
-                  <span className={`absolute -top-2 right-2 text-2xs px-1.5 py-0.5 rounded font-bold
-                    ${id === 'pdf' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{badge}</span>
-                  <p className={`text-sm font-semibold ${s.fileFormat === id ? 'text-primary-700' : 'text-gray-700'}`}>{label}</p>
-                  <p className="text-2xs text-gray-400 mt-0.5">{sub}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Auto-generate */}
-          <div className={`flex items-center justify-between p-3.5 rounded-xl border transition-all
-            ${s.autoGenerate ? 'border-primary-200 bg-primary-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
-            <div>
-              <p className="text-sm font-medium text-gray-800">Auto-generate on order import</p>
-              <p className="text-xs text-gray-400 mt-0.5">Immediately prepare labels when orders are synced or uploaded</p>
-            </div>
-            <Toggle checked={!!s.autoGenerate} onChange={(v) => upd('autoGenerate', v)} />
-          </div>
-        </div>
-      </Section>
-
-      {/* Save button */}
+      {/* Save */}
       <div className="flex justify-end">
         <button
           onClick={handleSave}
