@@ -701,36 +701,178 @@ function CouriersTab() {
   );
 }
 
+/* ── Label Size visual card ──────────────────────────── */
+const LABEL_SIZES = [
+  {
+    id: '4x6',
+    name: '4 × 6 inch',
+    sub: 'Thermal — Most Popular',
+    dims: '100 × 150 mm',
+    platforms: ['Amazon', 'Meesho'],
+    color: 'blue',
+    shape: { w: 40, h: 60 },
+    popular: true,
+  },
+  {
+    id: '3x5',
+    name: '3 × 5 inch',
+    sub: 'Flipkart New Format',
+    dims: '75 × 125 mm',
+    platforms: ['Flipkart'],
+    color: 'indigo',
+    shape: { w: 36, h: 50 },
+  },
+  {
+    id: 'A6',
+    name: 'A6',
+    sub: 'Thermal / Small Inkjet',
+    dims: '105 × 148 mm',
+    platforms: ['Meesho', 'Flipkart'],
+    color: 'violet',
+    shape: { w: 42, h: 60 },
+  },
+  {
+    id: 'A4_4',
+    name: 'A4 — 4 per page',
+    sub: 'Regular Printer',
+    dims: '210 × 297 mm  ·  2×2 grid',
+    platforms: ['Amazon', 'Flipkart', 'Meesho'],
+    color: 'emerald',
+    shape: { w: 56, h: 72 },
+    grid: '2×2',
+  },
+  {
+    id: 'A4_2',
+    name: 'A4 — 2 per page',
+    sub: 'Regular Printer',
+    dims: '210 × 297 mm  ·  1×2 grid',
+    platforms: ['Amazon', 'Flipkart', 'Meesho'],
+    color: 'teal',
+    shape: { w: 56, h: 72 },
+    grid: '1×2',
+  },
+  {
+    id: 'A4_1',
+    name: 'A4 — Full Page',
+    sub: 'Single large label',
+    dims: '210 × 297 mm',
+    platforms: ['Amazon'],
+    color: 'gray',
+    shape: { w: 56, h: 72 },
+    grid: '1×1',
+  },
+];
+
+const SIZE_COLORS = {
+  blue:   { ring: 'ring-blue-500',   bg: 'bg-blue-50',   text: 'text-blue-700',   badge: 'bg-blue-100 text-blue-700'   },
+  indigo: { ring: 'ring-indigo-500', bg: 'bg-indigo-50', text: 'text-indigo-700', badge: 'bg-indigo-100 text-indigo-700' },
+  violet: { ring: 'ring-violet-500', bg: 'bg-violet-50', text: 'text-violet-700', badge: 'bg-violet-100 text-violet-700' },
+  emerald:{ ring: 'ring-emerald-500',bg: 'bg-emerald-50',text: 'text-emerald-700',badge: 'bg-emerald-100 text-emerald-700' },
+  teal:   { ring: 'ring-teal-500',   bg: 'bg-teal-50',   text: 'text-teal-700',   badge: 'bg-teal-100 text-teal-700'   },
+  gray:   { ring: 'ring-gray-400',   bg: 'bg-gray-50',   text: 'text-gray-700',   badge: 'bg-gray-100 text-gray-600'   },
+};
+
+function LabelSizeCard({ size, selected, onSelect }) {
+  const c = SIZE_COLORS[size.color];
+  const { w, h } = size.shape;
+  return (
+    <button
+      onClick={() => onSelect(size.id)}
+      className={`relative flex flex-col items-center p-3 rounded-xl border-2 transition-all text-center w-full
+        ${selected ? `${c.ring} ring-2 ${c.bg} border-transparent` : 'border-gray-200 hover:border-gray-300 bg-white'}`}
+    >
+      {size.popular && (
+        <span className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 text-2xs font-bold bg-orange-500 text-white rounded-full whitespace-nowrap">
+          Most Used
+        </span>
+      )}
+      {/* Mini paper preview */}
+      <div className="mb-2 mt-1 flex items-center justify-center" style={{ height: 64 }}>
+        <div
+          className={`rounded border-2 ${selected ? `border-current ${c.text}` : 'border-gray-300'} relative flex items-center justify-center`}
+          style={{ width: w * 0.72, height: h * 0.72 }}
+        >
+          {size.grid === '2×2' && (
+            <div className="absolute inset-0 grid grid-cols-2 grid-rows-2 gap-px p-px opacity-30">
+              {[0,1,2,3].map(i => <div key={i} className="bg-current rounded-sm" />)}
+            </div>
+          )}
+          {size.grid === '1×2' && (
+            <div className="absolute inset-0 grid grid-cols-1 grid-rows-2 gap-px p-px opacity-30">
+              {[0,1].map(i => <div key={i} className="bg-current rounded-sm" />)}
+            </div>
+          )}
+          {(size.id === '4x6' || size.id === '3x5' || size.id === 'A6') && (
+            <div className="absolute inset-1 flex flex-col gap-0.5 opacity-25">
+              <div className="h-1.5 bg-current rounded w-3/4 mx-auto" />
+              <div className="h-px bg-current rounded w-full" />
+              <div className="h-px bg-current rounded w-2/3" />
+              <div className="h-px bg-current rounded w-1/2" />
+              <div className="mt-auto h-3 bg-current rounded w-full opacity-70" />
+            </div>
+          )}
+        </div>
+      </div>
+      <p className={`text-xs font-bold ${selected ? c.text : 'text-gray-800'}`}>{size.name}</p>
+      <p className="text-2xs text-gray-500 mt-0.5">{size.sub}</p>
+      <p className="text-2xs text-gray-400 mt-0.5">{size.dims}</p>
+      <div className="flex flex-wrap gap-1 justify-center mt-1.5">
+        {size.platforms.map(p => (
+          <span key={p} className={`text-2xs px-1.5 py-0.5 rounded font-medium ${selected ? c.badge : 'bg-gray-100 text-gray-500'}`}>{p}</span>
+        ))}
+      </div>
+    </button>
+  );
+}
+
 /* ── Label settings tab ──────────────────────────────── */
 function LabelSettingsTab() {
-  const [defaults, setDefaults] = useState({
-    defaultSize: 'A4_4',
-    returnName: '',
-    returnAddr: '',
-    returnPhone: '',
-    returnGST: '',
-    brandLogo: false,
+  const [s, setS] = useState({
+    // Size
+    defaultSize: '4x6',
+    // Print content
+    printContent: 'label_only',     // label_only | invoice_only | combined | separate
+    // COD
+    codBadge:     true,
+    codAmount:    true,
+    prepaidBadge: true,
+    // Return address
+    returnName:   '',
+    returnPhone:  '',
+    returnLine1:  '',
+    returnLine2:  '',
+    returnCity:   '',
+    returnState:  '',
+    returnPin:    '',
+    returnGST:    '',
+    // Brand
+    brandLogo:    false,
+    customMsg:    '',
+    // Print prefs
+    fontSize:     'medium',         // small | medium | large
+    fileFormat:   'pdf',            // pdf | zpl
     autoGenerate: false,
   });
-  const upd = (k, v) => setDefaults((d) => ({ ...d, [k]: v }));
-  const [saved,   setSaved]   = useState(false);
-  const [saving,  setSaving]  = useState(false);
+
+  const upd = (k, v) => setS((d) => ({ ...d, [k]: v }));
+  const [saved,  setSaved]  = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     api.get('/settings')
-      .then(({ data }) => { if (data?.labelDefaults) setDefaults((d) => ({ ...d, ...data.labelDefaults })); })
+      .then(({ data }) => { if (data?.labelDefaults) setS((d) => ({ ...d, ...data.labelDefaults })); })
       .catch(() => {});
   }, []);
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await api.put('/settings/label-defaults', defaults);
+      await api.put('/settings/label-defaults', s);
       setSaved(true);
-      toast.success('Label defaults saved');
+      toast.success('Label settings saved');
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
-      toast.error(err?.response?.data?.message || 'Failed to save label defaults');
+      toast.error(err?.response?.data?.message || 'Failed to save');
     } finally {
       setSaving(false);
     }
@@ -738,57 +880,246 @@ function LabelSettingsTab() {
 
   return (
     <div className="space-y-5">
-      <Section title="Default Label Format" desc="These settings apply to all new label generations.">
-        <div className="space-y-4">
-          <div>
-            <label className="form-label">Default Label Size</label>
-            <select className="form-select w-full sm:w-64" value={defaults.defaultSize} onChange={(e) => upd('defaultSize', e.target.value)}>
-              <option value="A4_4">A4 — 4 labels per page</option>
-              <option value="A4_2">A4 — 2 labels per page</option>
-              <option value="A4_1">A4 — Full page</option>
-              <option value="A6_1">A6 — Single label (Thermal)</option>
-            </select>
-          </div>
-          <div className="space-y-3">
-            {[
-              { key: 'brandLogo',     label: 'Show brand logo on labels',      desc: 'Adds your business logo to each label' },
-              { key: 'autoGenerate',  label: 'Auto-generate on order import',  desc: 'Immediately create labels when orders are synced' },
-            ].map(({ key, label, desc }) => (
-              <div key={key} className="flex items-center justify-between p-3 rounded-xl border border-gray-200 hover:bg-gray-50">
-                <div>
-                  <p className="text-sm font-medium text-gray-800">{label}</p>
-                  <p className="text-xs text-gray-400">{desc}</p>
-                </div>
-                <Toggle checked={!!defaults[key]} onChange={(v) => upd(key, v)} />
+
+      {/* ── 1. Label Size ─────────────────────────────── */}
+      <Section title="Label Size" desc="Choose your default size based on your printer type.">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {LABEL_SIZES.map((size) => (
+            <LabelSizeCard
+              key={size.id}
+              size={size}
+              selected={s.defaultSize === size.id}
+              onSelect={(id) => upd('defaultSize', id)}
+            />
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-gray-400 flex items-center gap-1">
+          <span className="inline-block w-2 h-2 rounded-full bg-blue-400" />
+          Most Indian sellers use <strong className="text-gray-600">4×6 inch thermal</strong> (TSC, Xprinter, TVS) or <strong className="text-gray-600">A4 4-up</strong> for regular printers.
+        </p>
+      </Section>
+
+      {/* ── 2. Print Content ──────────────────────────── */}
+      <Section title="What to Print" desc="Choose what gets included when you download a label.">
+        <div className="grid sm:grid-cols-2 gap-3">
+          {[
+            { id: 'label_only',  icon: '🏷️', title: 'Label Only',              desc: 'Just the shipping label. Print invoice separately.' },
+            { id: 'invoice_only',icon: '🧾', title: 'Invoice Only',             desc: 'Tax invoice only. Useful for batch invoice printing.' },
+            { id: 'combined',    icon: '📄', title: 'Label + Invoice (Same Page)', desc: 'Combined A4 — cut in half. Label on bottom, invoice on top.' },
+            { id: 'separate',    icon: '📋', title: 'Label + Invoice (Separate)',  desc: 'Two separate PDFs — ideal for high-volume sellers.' },
+          ].map(({ id, icon, title, desc }) => (
+            <button
+              key={id}
+              onClick={() => upd('printContent', id)}
+              className={`flex items-start gap-3 p-3.5 rounded-xl border-2 text-left transition-all
+                ${s.printContent === id ? 'border-primary-500 bg-primary-50/50 ring-2 ring-primary-200' : 'border-gray-200 hover:border-gray-300'}`}
+            >
+              <span className="text-xl mt-0.5">{icon}</span>
+              <div>
+                <p className={`text-sm font-semibold ${s.printContent === id ? 'text-primary-700' : 'text-gray-800'}`}>{title}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{desc}</p>
               </div>
-            ))}
+              {s.printContent === id && (
+                <CheckCircleSolid className="h-4 w-4 text-primary-600 ml-auto flex-shrink-0 mt-0.5" />
+              )}
+            </button>
+          ))}
+        </div>
+      </Section>
+
+      {/* ── 3. COD & Prepaid ──────────────────────────── */}
+      <Section title="COD & Prepaid Labels" desc="India has 60%+ COD orders — make them impossible to miss.">
+        <div className="space-y-3">
+          {[
+            {
+              key: 'codBadge',
+              label: 'Show red COD badge on labels',
+              desc: 'Prints a bold red "CASH ON DELIVERY" badge — delivery agents scan for this first',
+              recommended: true,
+            },
+            {
+              key: 'codAmount',
+              label: 'Print COD amount on label',
+              desc: 'Shows "COD: ₹XXX" so the delivery agent knows exactly how much to collect',
+              recommended: true,
+            },
+            {
+              key: 'prepaidBadge',
+              label: 'Show PREPAID marker on prepaid orders',
+              desc: 'Clearly marks non-COD orders so agents don\'t attempt cash collection',
+              recommended: true,
+            },
+          ].map(({ key, label, desc, recommended }) => (
+            <div key={key} className={`flex items-center justify-between p-3.5 rounded-xl border transition-all
+              ${s[key] ? 'border-success-200 bg-success-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
+              <div className="flex-1 min-w-0 pr-4">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-gray-800">{label}</p>
+                  {recommended && <span className="text-2xs px-1.5 py-0.5 rounded bg-orange-100 text-orange-600 font-semibold">Recommended</span>}
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
+              </div>
+              <Toggle checked={!!s[key]} onChange={(v) => upd(key, v)} />
+            </div>
+          ))}
+        </div>
+        {/* Visual preview hint */}
+        {s.codBadge && (
+          <div className="mt-3 p-3 rounded-lg bg-gray-50 border border-gray-200 flex items-center gap-3">
+            <div className="flex-shrink-0 px-3 py-1.5 bg-red-600 rounded text-white text-xs font-bold">CASH ON DELIVERY</div>
+            {s.codAmount && <div className="text-sm font-bold text-gray-800">₹ 499</div>}
+            <p className="text-xs text-gray-400 ml-auto">Preview</p>
+          </div>
+        )}
+      </Section>
+
+      {/* ── 4. Return / Sender Address ────────────────── */}
+      <Section
+        title="Return Address"
+        desc="Where failed deliveries (RTO) come back to. This may differ from your GST-registered address."
+      >
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label className="form-label">Business / Store Name</label>
+            <input className="form-input" placeholder="StyleKart" value={s.returnName} onChange={(e) => upd('returnName', e.target.value)} />
+          </div>
+          <div>
+            <label className="form-label">Contact Phone</label>
+            <input className="form-input" placeholder="9876543210" maxLength={10} value={s.returnPhone} onChange={(e) => upd('returnPhone', e.target.value)} />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="form-label">Address Line 1</label>
+            <input className="form-input" placeholder="Shop 12, Gandhi Nagar" value={s.returnLine1} onChange={(e) => upd('returnLine1', e.target.value)} />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="form-label">Address Line 2 <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input className="form-input" placeholder="Near Bus Stand" value={s.returnLine2} onChange={(e) => upd('returnLine2', e.target.value)} />
+          </div>
+          <div>
+            <label className="form-label">City</label>
+            <input className="form-input" placeholder="Jaipur" value={s.returnCity} onChange={(e) => upd('returnCity', e.target.value)} />
+          </div>
+          <div>
+            <label className="form-label">State</label>
+            <input className="form-input" placeholder="Rajasthan" value={s.returnState} onChange={(e) => upd('returnState', e.target.value)} />
+          </div>
+          <div>
+            <label className="form-label">Pincode</label>
+            <input className="form-input" placeholder="302001" maxLength={6} value={s.returnPin} onChange={(e) => upd('returnPin', e.target.value.replace(/\D/g, ''))} />
+          </div>
+          <div>
+            <label className="form-label">GSTIN <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input className="form-input uppercase" placeholder="22AAAAA0000A1Z5" maxLength={15} value={s.returnGST} onChange={(e) => upd('returnGST', e.target.value.toUpperCase())} />
+          </div>
+        </div>
+        <div className="mt-3 flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+          <ExclamationTriangleIcon className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-700">India's RTO rate is 15–25%. Make sure this address is your actual warehouse/pickup location, not a virtual office.</p>
+        </div>
+      </Section>
+
+      {/* ── 5. Branding ───────────────────────────────── */}
+      <Section title="Branding" desc="Logo and custom message for your labels.">
+        <div className="space-y-4">
+          <div className={`flex items-center justify-between p-3.5 rounded-xl border transition-all
+            ${s.brandLogo ? 'border-primary-200 bg-primary-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
+            <div>
+              <p className="text-sm font-medium text-gray-800">Show brand logo on labels</p>
+              <p className="text-xs text-gray-400 mt-0.5">Appears on ShipSplit-generated labels and packing slips</p>
+            </div>
+            <Toggle checked={!!s.brandLogo} onChange={(v) => upd('brandLogo', v)} />
+          </div>
+          <div>
+            <label className="form-label">Custom Message to Customer <span className="text-gray-400 font-normal">(optional)</span></label>
+            <input
+              className="form-input"
+              placeholder="Thank you for your order! 🎉"
+              maxLength={80}
+              value={s.customMsg}
+              onChange={(e) => upd('customMsg', e.target.value)}
+            />
+            <p className="form-hint">{s.customMsg.length}/80 chars — printed at the bottom of the label</p>
+          </div>
+          <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg border border-blue-100">
+            <span className="text-blue-500 text-sm">ℹ️</span>
+            <p className="text-xs text-blue-700">
+              <strong>Note:</strong> Meesho prohibits seller branding on packaging. Amazon and Flipkart labels are carrier-generated — logo applies only to ShipSplit-generated labels and packing slips.
+            </p>
           </div>
         </div>
       </Section>
 
-      <Section title="Return Address" desc="Printed on all labels as the return/sender address.">
-        <div className="grid sm:grid-cols-2 gap-4">
+      {/* ── 6. Print Preferences ──────────────────────── */}
+      <Section title="Print Preferences" desc="Fine-tune how your labels look and which format to use.">
+        <div className="space-y-5">
+
+          {/* Font size */}
           <div>
-            <label className="form-label">Business Name</label>
-            <input className="form-input" placeholder="StyleKart" value={defaults.returnName} onChange={(e) => upd('returnName', e.target.value)} />
+            <label className="form-label">Address Font Size</label>
+            <div className="flex gap-3 mt-1">
+              {[
+                { id: 'small',  label: 'Small',  sub: '~8pt — fits more text' },
+                { id: 'medium', label: 'Medium', sub: '~10pt — recommended'  },
+                { id: 'large',  label: 'Large',  sub: '~12pt — easy to read' },
+              ].map(({ id, label, sub }) => (
+                <button
+                  key={id}
+                  onClick={() => upd('fontSize', id)}
+                  className={`flex-1 py-2.5 px-3 rounded-xl border-2 text-center transition-all
+                    ${s.fontSize === id ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-200' : 'border-gray-200 hover:border-gray-300'}`}
+                >
+                  <p className={`text-sm font-semibold ${s.fontSize === id ? 'text-primary-700' : 'text-gray-700'}`}>{label}</p>
+                  <p className="text-2xs text-gray-400 mt-0.5">{sub}</p>
+                </button>
+              ))}
+            </div>
           </div>
+
+          {/* File format */}
           <div>
-            <label className="form-label">Contact Phone</label>
-            <input className="form-input" placeholder="9876543210" value={defaults.returnPhone} onChange={(e) => upd('returnPhone', e.target.value)} />
+            <label className="form-label">File Format</label>
+            <div className="flex gap-3 mt-1">
+              {[
+                { id: 'pdf', label: 'PDF', sub: 'All printers — recommended', badge: 'Default' },
+                { id: 'zpl', label: 'ZPL', sub: 'Zebra / TSC printers only', badge: 'Advanced' },
+              ].map(({ id, label, sub, badge }) => (
+                <button
+                  key={id}
+                  onClick={() => upd('fileFormat', id)}
+                  className={`flex-1 py-2.5 px-3 rounded-xl border-2 text-center transition-all relative
+                    ${s.fileFormat === id ? 'border-primary-500 bg-primary-50 ring-2 ring-primary-200' : 'border-gray-200 hover:border-gray-300'}`}
+                >
+                  <span className={`absolute -top-2 right-2 text-2xs px-1.5 py-0.5 rounded font-bold
+                    ${id === 'pdf' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>{badge}</span>
+                  <p className={`text-sm font-semibold ${s.fileFormat === id ? 'text-primary-700' : 'text-gray-700'}`}>{label}</p>
+                  <p className="text-2xs text-gray-400 mt-0.5">{sub}</p>
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="sm:col-span-2">
-            <label className="form-label">Full Address</label>
-            <textarea className="form-input resize-none" rows={2} placeholder="Shop 12, Gandhi Nagar, Jaipur, Rajasthan - 302001" value={defaults.returnAddr} onChange={(e) => upd('returnAddr', e.target.value)} />
-          </div>
-          <div>
-            <label className="form-label">GSTIN <span className="text-gray-400 font-normal">(optional)</span></label>
-            <input className="form-input uppercase" placeholder="22AAAAA0000A1Z5" value={defaults.returnGST} onChange={(e) => upd('returnGST', e.target.value.toUpperCase())} />
+
+          {/* Auto-generate */}
+          <div className={`flex items-center justify-between p-3.5 rounded-xl border transition-all
+            ${s.autoGenerate ? 'border-primary-200 bg-primary-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
+            <div>
+              <p className="text-sm font-medium text-gray-800">Auto-generate on order import</p>
+              <p className="text-xs text-gray-400 mt-0.5">Immediately prepare labels when orders are synced or uploaded</p>
+            </div>
+            <Toggle checked={!!s.autoGenerate} onChange={(v) => upd('autoGenerate', v)} />
           </div>
         </div>
-        <button onClick={handleSave} disabled={saving} className={`mt-4 btn-primary btn-sm ${saved ? '!bg-success-600' : ''}`}>
-          {saving ? 'Saving…' : saved ? <><CheckCircleSolid className="h-3.5 w-3.5" />Saved!</> : 'Save Label Defaults'}
-        </button>
       </Section>
+
+      {/* Save button */}
+      <div className="flex justify-end">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className={`btn-primary gap-2 ${saved ? '!bg-success-600' : ''}`}
+        >
+          {saving ? 'Saving…' : saved ? <><CheckCircleSolid className="h-4 w-4" /> Saved!</> : 'Save Label Settings'}
+        </button>
+      </div>
     </div>
   );
 }
