@@ -18,12 +18,19 @@ const PLATFORM_SERVICES = {
 /* ── GET /orders ─────────────────────────────────────────────────────── */
 exports.getOrders = async (req, res, next) => {
   try {
-    const { page, limit, platform, status, courierPartner, search, dateFrom, dateTo, sortBy, sortOrder } = req.query;
+    const { page, limit, platform, status, statuses, courierPartner, search, dateFrom, dateTo, sortBy, sortOrder } = req.query;
     const skip = (page - 1) * limit;
 
     const filter = { userId: req.user._id };
     if (platform)       filter.platform       = platform;
-    if (status)         filter.status         = status;
+    // `statuses` (comma-separated) takes precedence over singular `status`
+    if (statuses) {
+      const statusArr = statuses.split(',').map((s) => s.trim()).filter(Boolean);
+      if (statusArr.length === 1) filter.status = statusArr[0];
+      else if (statusArr.length > 1) filter.status = { $in: statusArr };
+    } else if (status) {
+      filter.status = status;
+    }
     if (courierPartner) filter.courierPartner = courierPartner;
     if (dateFrom || dateTo) {
       filter.createdAt = {};
@@ -47,6 +54,26 @@ exports.getOrders = async (req, res, next) => {
     ]);
 
     paginated(res, orders, { page, limit, total });
+  } catch (err) { next(err); }
+};
+
+/* ── GET /orders/tab-counts ─────────────────────────────────────────── */
+// Returns per-tab order counts used for badge numbers in the UI.
+// Runs 5 parallel countDocuments — each is an index-only scan (userId+status idx).
+exports.getTabCounts = async (req, res, next) => {
+  try {
+    const base = { userId: req.user._id };
+    if (req.query.platform) base.platform = req.query.platform;
+
+    const [pending, accepted, shipped, delivered, cancelled] = await Promise.all([
+      Order.countDocuments({ ...base, status: 'pending' }),
+      Order.countDocuments({ ...base, status: { $in: ['processing', 'label_generated'] } }),
+      Order.countDocuments({ ...base, status: 'shipped' }),
+      Order.countDocuments({ ...base, status: 'delivered' }),
+      Order.countDocuments({ ...base, status: { $in: ['cancelled', 'returned'] } }),
+    ]);
+
+    success(res, { pending, accepted, shipped, delivered, cancelled });
   } catch (err) { next(err); }
 };
 
@@ -309,8 +336,8 @@ exports.bulkDownloadLabels = async (req, res, next) => {
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return next(AppError.badRequest('orderIds array is required'));
     }
-    if (orderIds.length > 50) {
-      return next(AppError.badRequest('Maximum 50 labels per bulk download'));
+    if (orderIds.length > 200) {
+      return next(AppError.badRequest('Maximum 200 labels per bulk download'));
     }
 
     // Fetch only orders that belong to this user and have a label ready
@@ -515,6 +542,18 @@ exports.syncOrders = async (req, res, next) => {
     }
     const svc = PLATFORM_SERVICES[platform]?.();
     if (!svc) return next(AppError.badRequest('Unsupported platform'));
+
+    /* ── Flipkart ────────────────────────────────────────────────────── */
+    if (platform === 'flipkart') {
+      const result = await svc.syncUserOrders(req.user._id, {
+        daysAgo: Number(daysAgo) || 7,
+      });
+      return success(res, {
+        imported: result.imported,
+        updated:  result.updated,
+        errors:   result.errors,
+      }, `Synced ${result.imported} new + ${result.updated} updated orders from Flipkart`);
+    }
 
     success(res, { imported: 0, updated: 0, errors: 0 }, `${platform} sync not yet implemented`);
   } catch (err) { next(err); }

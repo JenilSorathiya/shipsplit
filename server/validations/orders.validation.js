@@ -9,6 +9,7 @@ exports.getOrders = Joi.object({
   limit:          Joi.number().integer().min(1).max(100).default(20),
   platform:       Joi.string().valid(...PLATFORMS),
   status:         Joi.string().valid(...STATUSES),
+  statuses:       Joi.string().trim().max(200),          // comma-separated multi-status (e.g. "processing,label_generated")
   courierPartner: Joi.string().valid(...COURIERS),
   search:         Joi.string().trim().max(100),
   dateFrom:       Joi.date().iso(),

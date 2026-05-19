@@ -14,11 +14,12 @@
  */
 
 const { v4: uuidv4 } = require('uuid');
-const Platform  = require('../models/Platform.model');
-const AppError  = require('../utils/AppError');
+const Platform    = require('../models/Platform.model');
+const AppError    = require('../utils/AppError');
 const { success, noContent } = require('../utils/response');
-const logger    = require('../utils/logger');
-const amazonSvc = require('../services/amazon.service');
+const logger      = require('../utils/logger');
+const amazonSvc   = require('../services/amazon.service');
+const flipkartSvc = require('../services/flipkart.service');
 
 const CLIENT_URL = () => process.env.CLIENT_URL || 'http://localhost:3000';
 
@@ -142,6 +143,37 @@ exports.disconnectPlatform = async (req, res, next) => {
 exports.syncPlatform = async (req, res, next) => {
   try {
     const { name } = req.params;
+
+    /* ── Flipkart sync ─────────────────────────────────────────────── */
+    if (name === 'flipkart') {
+      const platform = await Platform
+        .findOne({ userId: req.user._id, platformName: 'flipkart', isConnected: true })
+        .select('+_accessToken +_refreshToken +_apiKey +_apiSecret');
+
+      if (!platform) {
+        return next(AppError.badRequest(
+          'Flipkart account is not connected. Go to Settings → Platforms to connect.'
+        ));
+      }
+
+      let result;
+      try {
+        result = await flipkartSvc.syncUserOrders(req.user._id, {
+          daysAgo: Number(req.body?.daysAgo) || 7,
+        });
+      } catch (svcErr) {
+        logger.error('[syncPlatform] flipkart syncUserOrders threw:', svcErr.message);
+        return next(AppError.badRequest(`Flipkart sync failed: ${svcErr.message}`));
+      }
+
+      return success(res, {
+        imported: result.imported,
+        updated:  result.updated,
+        errors:   result.errors,
+        syncedAt: new Date(),
+      }, `Flipkart sync complete — ${result.imported} new, ${result.updated} updated`);
+    }
+
     if (name !== 'amazon') {
       return next(AppError.badRequest(`Manual sync via API not supported for ${name}`));
     }
@@ -216,6 +248,122 @@ exports.manualConnect = async (req, res, next) => {
 
     logger.info(`Amazon manually connected — user ${req.user._id}`);
     success(res, { platform: platform.toSafeObject() }, 'Amazon connected via manual token');
+  } catch (err) { next(err); }
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   FLIPKART — OAuth (Third Party) + Self Access
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── GET /platforms/flipkart/oauth-url  (Third Party — requires Flipkart partner approval) */
+exports.getFlipkartOAuthUrl = async (req, res, next) => {
+  try {
+    if (!process.env.FLIPKART_CLIENT_ID) {
+      return next(AppError.badRequest(
+        'FLIPKART_CLIENT_ID is not configured. Add it to your Render environment variables.'
+      ));
+    }
+
+    const state = uuidv4();
+
+    await Platform.findOneAndUpdate(
+      { userId: req.user._id, platformName: 'flipkart' },
+      {
+        userId:       req.user._id,
+        platformName: 'flipkart',
+        metadata:     { oauthState: state, oauthInitiatedAt: new Date() },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    const oauthUrl = flipkartSvc.buildOAuthUrl(state);
+    success(res, { oauthUrl }, 'Flipkart OAuth URL generated');
+  } catch (err) { next(err); }
+};
+
+/* ── GET /platforms/flipkart/callback  (public — Flipkart redirects here after consent) */
+exports.handleFlipkartCallback = async (req, res, next) => {
+  try {
+    const { code, state, error, error_description } = req.query;
+    const CLIENT = process.env.CLIENT_URL || 'http://localhost:3000';
+
+    if (error) {
+      logger.warn(`Flipkart OAuth denied: ${error} — ${error_description}`);
+      return res.redirect(`${CLIENT}/dashboard/settings?tab=platforms&error=flipkart_rejected`);
+    }
+
+    if (!code || !state) {
+      return res.redirect(`${CLIENT}/dashboard/settings?tab=platforms&error=flipkart_missing_params`);
+    }
+
+    // Find the Platform doc by state token
+    const platform = await Platform
+      .findOne({ platformName: 'flipkart', 'metadata.oauthState': state })
+      .select('+_accessToken +_refreshToken');
+
+    if (!platform) {
+      logger.warn('Flipkart callback: state not found or expired');
+      return res.redirect(`${CLIENT}/dashboard/settings?tab=platforms&error=flipkart_invalid_state`);
+    }
+
+    // Exchange code for tokens
+    const { accessToken, refreshToken, expiresIn } = await flipkartSvc.exchangeAuthCode(code);
+
+    platform.accessToken    = accessToken;
+    platform.refreshToken   = refreshToken;
+    platform.tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);
+    platform.isConnected    = true;
+    platform.lastSyncStatus = null;
+    platform.lastSyncError  = null;
+    platform.metadata       = { ...platform.metadata, oauthState: null, connectedAt: new Date() };
+    await platform.save();
+
+    logger.info(`Flipkart OAuth connected — user ${platform.userId}`);
+    res.redirect(`${CLIENT}/dashboard/settings?tab=platforms&connected=flipkart`);
+  } catch (err) {
+    logger.error('Flipkart OAuth callback error:', err.message);
+    const CLIENT = process.env.CLIENT_URL || 'http://localhost:3000';
+    res.redirect(`${CLIENT}/dashboard/settings?tab=platforms&error=flipkart_oauth_failed`);
+  }
+};
+
+/* ── POST /platforms/flipkart/self-connect  (Self Access — seller's own API Key + Secret) */
+exports.flipkartSelfConnect = async (req, res, next) => {
+  try {
+    const { apiKey, apiSecret } = req.body;
+    if (!apiKey || !apiSecret) {
+      return next(AppError.badRequest('Both API Key and API Secret are required'));
+    }
+
+    // Validate the credentials by fetching a token immediately
+    let accessToken, expiresIn;
+    try {
+      ({ accessToken, expiresIn } = await flipkartSvc.getSelfAccessToken(apiKey, apiSecret));
+    } catch (credErr) {
+      logger.warn('[flipkartSelfConnect] invalid credentials:', credErr.response?.data || credErr.message);
+      return next(AppError.badRequest('Invalid Flipkart API Key or Secret. Please check your credentials.'));
+    }
+
+    // Upsert Platform doc — store encrypted apiKey + apiSecret + initial access token
+    const platform = await Platform.findOneAndUpdate(
+      { userId: req.user._id, platformName: 'flipkart' },
+      { userId: req.user._id, platformName: 'flipkart' },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    ).select('+_accessToken +_apiKey +_apiSecret');
+
+    platform.apiKey         = apiKey;
+    platform.apiSecret      = apiSecret;
+    platform.accessToken    = accessToken;
+    platform.refreshToken   = null;                         // Self Access has no refresh token
+    platform.tokenExpiresAt = new Date(Date.now() + (expiresIn || 5184000) * 1000);
+    platform.isConnected    = true;
+    platform.lastSyncStatus = null;
+    platform.lastSyncError  = null;
+    platform.metadata       = { selfAccess: true, connectedAt: new Date() };
+    await platform.save();
+
+    logger.info(`Flipkart Self Access connected — user ${req.user._id}`);
+    success(res, { platform: platform.toSafeObject() }, 'Flipkart connected via Self Access');
   } catch (err) { next(err); }
 };
 

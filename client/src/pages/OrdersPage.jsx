@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   MagnifyingGlassIcon, ArrowDownTrayIcon, ArrowPathIcon,
   ChevronLeftIcon, ChevronRightIcon, EllipsisHorizontalIcon,
@@ -206,85 +206,97 @@ function RowMenu({ onView, onDelete }) {
 
 /* ── Main page ───────────────────────────────────────────────────────── */
 export default function OrdersPage() {
-  const [orders,  setOrders]  = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
+  /* ── Server-side data ───────────────────────────────────────────── */
+  const [tabOrders,   setTabOrders]   = useState([]);   // current page of current tab
+  const [tabCounts,   setTabCounts]   = useState({});   // { pending, accepted, shipped, delivered, cancelled }
+  const [serverTotal, setServerTotal] = useState(0);    // total matching the current tab+filters
+  const [loading,     setLoading]     = useState(true);
+  const [syncing,     setSyncing]     = useState(false);
 
-  const [activeTab, setActiveTab] = useState('pending');
-  const [search,    setSearch]    = useState('');
-  const [platform,  setPlatform]  = useState('');
-  const [selected,  setSelected]  = useState(new Set());
-  const [page,      setPage]      = useState(1);
+  /* ── Filters ─────────────────────────────────────────────────────── */
+  const [activeTab,   setActiveTab]   = useState('pending');
+  const [searchInput, setSearchInput] = useState('');   // immediate input value
+  const [search,      setSearch]      = useState('');   // debounced (triggers fetch)
+  const [platform,    setPlatform]    = useState('');
+  const [page,        setPage]        = useState(1);
 
-  const [acceptingIds,  setAcceptingIds]  = useState(new Set());
-  const [reprintingIds, setReprintingIds] = useState(new Set());
-
-  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  /* ── UI / action state ───────────────────────────────────────────── */
+  const [selected,              setSelected]              = useState(new Set());
+  const [acceptingIds,          setAcceptingIds]          = useState(new Set());
+  const [reprintingIds,         setReprintingIds]         = useState(new Set());
+  const [headerMenuOpen,        setHeaderMenuOpen]        = useState(false);
   const [bulkAccepting,         setBulkAccepting]         = useState(false);
   const [bulkDownloadingLabels, setBulkDownloadingLabels] = useState(false);
+  const [rejectTarget,          setRejectTarget]          = useState(null);
+  const [rejectingId,           setRejectingId]           = useState(null);
 
-  const [rejectTarget, setRejectTarget] = useState(null);
-  const [rejectingId,  setRejectingId]  = useState(null);
+  const currentTab = TABS.find((t) => t.key === activeTab);
 
-  /* ── Fetch all orders ────────────────────────────────────────────── */
-  const fetchOrders = useCallback(async () => {
-    setLoading(true);
+  /* ── Debounce search input (300 ms) ─────────────────────────────── */
+  useEffect(() => {
+    const t = setTimeout(() => { setSearch(searchInput); setPage(1); }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  /* ── Fetch tab badge counts (5 parallel countDocuments) ─────────── */
+  const fetchTabCounts = useCallback(async () => {
     try {
-      let all = [], cur = 1;
-      while (true) {
-        const r = await api.get('/orders', { params: { page: cur, limit: 100, sortBy: 'createdAt', sortOrder: 'desc' } });
-        const batch = Array.isArray(r.data) ? r.data : [];
-        all = all.concat(batch);
-        const total = r.meta?.total ?? r.meta?.count ?? null;
-        if (batch.length < 100 || (total !== null && all.length >= total)) break;
-        cur++;
-      }
-      setOrders(all);
+      const params = {};
+      if (platform) params.platform = platform;
+      const { data } = await api.get('/orders/tab-counts', { params });
+      setTabCounts(data || {});
+    } catch { /* non-critical — ignore */ }
+  }, [platform]);
+
+  /* ── Fetch current tab's orders (server-side paginated) ─────────── */
+  const fetchTabOrders = useCallback(async () => {
+    setLoading(true);
+    setSelected(new Set());
+    try {
+      const params = {
+        page,
+        limit:     PAGE_SIZE,
+        sortBy:    'createdAt',
+        sortOrder: 'desc',
+        statuses:  currentTab.statuses.join(','),
+      };
+      if (search)   params.search   = search;
+      if (platform) params.platform = platform;
+
+      const r    = await api.get('/orders', { params });
+      const rows = Array.isArray(r.data) ? r.data : [];
+      setTabOrders(rows);
+      setServerTotal(r.meta?.total ?? rows.length);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to load orders');
-      setOrders([]);
+      setTabOrders([]);
+      setServerTotal(0);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeTab, page, search, platform, currentTab]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { fetchOrders(); }, [fetchOrders]);
+  /* ── Trigger fetches when dependencies change ───────────────────── */
+  useEffect(() => { fetchTabOrders(); }, [fetchTabOrders]);
+  useEffect(() => { fetchTabCounts(); }, [fetchTabCounts]);
 
-  /* ── Tab counts ──────────────────────────────────────────────────── */
-  const tabCounts = useMemo(() => {
-    const counts = {};
-    for (const tab of TABS) {
-      counts[tab.key] = orders.filter((o) => tab.statuses.includes(o.status)).length;
-    }
-    return counts;
-  }, [orders]);
+  /* ── While syncing: poll tab counts every 2 s for live progress ─── */
+  useEffect(() => {
+    if (!syncing) return;
+    const id = setInterval(fetchTabCounts, 2000);
+    return () => clearInterval(id);
+  }, [syncing, fetchTabCounts]);
 
-  /* ── Filtered orders for active tab ─────────────────────────────── */
-  const currentTab = TABS.find((t) => t.key === activeTab);
-  const filtered = useMemo(() => {
-    let data = orders.filter((o) => currentTab.statuses.includes(o.status));
-    if (search) {
-      const q = search.toLowerCase();
-      data = data.filter((o) =>
-        (o.orderId     || '').toLowerCase().includes(q) ||
-        (o.productName || '').toLowerCase().includes(q) ||
-        (o.sku         || '').toLowerCase().includes(q) ||
-        (o.buyerName   || '').toLowerCase().includes(q)
-      );
-    }
-    if (platform) data = data.filter((o) => o.platform === platform);
-    return data;
-  }, [orders, activeTab, search, platform, currentTab]);
-
-  const totalPages   = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paged        = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  /* ── Derived ─────────────────────────────────────────────────────── */
+  const totalPages   = Math.max(1, Math.ceil(serverTotal / PAGE_SIZE));
+  const paged        = tabOrders;                        // already server-paginated
   const allSelected  = paged.length > 0 && paged.every((o) => selected.has(o._id));
   const someSelected = selected.size > 0;
 
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(paged.map((o) => o._id)));
   const toggle    = (id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
-  const switchTab = (key) => { setActiveTab(key); setSelected(new Set()); setPage(1); setSearch(''); };
+  const switchTab = (key) => { setActiveTab(key); setSelected(new Set()); setPage(1); setSearch(''); setSearchInput(''); };
 
   /* ── Read real error message from a Blob response ───────────────── */
   const readBlobError = async (err) => {
@@ -348,11 +360,11 @@ export default function OrdersPage() {
   const handleAccept = async (orderId) => {
     setAcceptingIds((p) => new Set(p).add(orderId));
     try {
-      const { data } = await api.post(`/orders/${orderId}/accept`);
-      setOrders((p) => p.map((o) => o._id === orderId
-        ? { ...o, status: 'label_generated', awb: data?.awb, shipmentId: data?.shipmentId }
-        : o
-      ));
+      await api.post(`/orders/${orderId}/accept`);
+      // Optimistic: remove from pending tab immediately, update badge counts
+      setTabOrders((p) => p.filter((o) => o._id !== orderId));
+      setServerTotal((t) => Math.max(0, t - 1));
+      setTabCounts((c) => ({ ...c, pending: Math.max(0, (c.pending || 0) - 1), accepted: (c.accepted || 0) + 1 }));
       toast.success('Order accepted — label ready! Go to Accepted tab.');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to accept order');
@@ -380,7 +392,14 @@ export default function OrdersPage() {
       await api.post(`/orders/${orderId}/reject`, { reason, reasonText });
       toast.success('Order cancelled successfully');
       setRejectTarget(null);
-      setOrders((p) => p.map((o) => o._id === orderId ? { ...o, status: 'cancelled' } : o));
+      // Optimistic: remove from current tab, update counts
+      setTabOrders((p) => p.filter((o) => o._id !== orderId));
+      setServerTotal((t) => Math.max(0, t - 1));
+      setTabCounts((c) => ({
+        ...c,
+        [activeTab]: Math.max(0, (c[activeTab] || 0) - 1),
+        cancelled:   (c.cancelled || 0) + 1,
+      }));
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to cancel order');
     } finally {
@@ -391,10 +410,12 @@ export default function OrdersPage() {
   /* ── Sync ────────────────────────────────────────────────────────── */
   const handleSync = async () => {
     setSyncing(true);
+    // (tab counts will auto-poll every 2 s while syncing — see useEffect above)
     try {
       const { data } = await api.post('/platforms/amazon/sync', { daysAgo: 30 });
       toast.success(`Sync complete — ${data?.imported ?? 0} new, ${data?.updated ?? 0} updated`);
-      fetchOrders();
+      fetchTabOrders();
+      fetchTabCounts();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Sync failed');
     } finally {
@@ -408,7 +429,9 @@ export default function OrdersPage() {
     try {
       const { data } = await api.delete('/orders');
       toast.success(`Cleared ${data?.deleted ?? 0} orders`);
-      setOrders([]);
+      setTabOrders([]);
+      setServerTotal(0);
+      setTabCounts({});
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to clear orders');
     }
@@ -421,34 +444,39 @@ export default function OrdersPage() {
     for (const id of ids) {
       try { await api.delete(`/orders/${id}`); deleted++; } catch { /* skip */ }
     }
-    setOrders((p) => p.filter((o) => !selected.has(o._id)));
+    const deletedSet = new Set(ids.slice(0, deleted));
+    setTabOrders((p) => p.filter((o) => !deletedSet.has(o._id)));
+    setServerTotal((t) => Math.max(0, t - deleted));
+    setTabCounts((c) => ({ ...c, [activeTab]: Math.max(0, (c[activeTab] || 0) - deleted) }));
     setSelected(new Set());
     toast.success(`Deleted ${deleted} order${deleted !== 1 ? 's' : ''}`);
   };
 
   /* ── Bulk actions ────────────────────────────────────────────────── */
   const handleBulkAccept = async () => {
-    const targets = orders.filter((o) => selected.has(o._id) && o.status === 'pending');
+    const targets = tabOrders.filter((o) => selected.has(o._id) && o.status === 'pending');
     if (!targets.length) { toast.error('No pending orders selected'); return; }
     setBulkAccepting(true);
     const results = await Promise.allSettled(
       targets.map((o) => api.post(`/orders/${o._id}/accept`).then((r) => ({ id: o._id, data: r.data })))
     );
-    const updates = {}; let accepted = 0, failed = 0;
+    let accepted = 0, failed = 0;
+    const acceptedIds = new Set();
     for (const r of results) {
-      if (r.status === 'fulfilled') {
-        updates[r.value.id] = { status: 'label_generated', awb: r.value.data?.awb };
-        accepted++;
-      } else { failed++; }
+      if (r.status === 'fulfilled') { acceptedIds.add(r.value.id); accepted++; }
+      else failed++;
     }
-    setOrders((p) => p.map((o) => updates[o._id] ? { ...o, ...updates[o._id] } : o));
+    setTabOrders((p) => p.filter((o) => !acceptedIds.has(o._id)));
+    setServerTotal((t) => Math.max(0, t - accepted));
+    setTabCounts((c) => ({ ...c, pending: Math.max(0, (c.pending || 0) - accepted), accepted: (c.accepted || 0) + accepted }));
+    setSelected(new Set());
     setBulkAccepting(false);
     if (accepted > 0) toast.success(`${accepted} order${accepted !== 1 ? 's' : ''} accepted — go to Accepted tab to download labels${failed > 0 ? ` (${failed} failed)` : ''}`);
     else toast.error(`All ${failed} orders failed`);
   };
 
   const handleBulkDownloadLabels = async () => {
-    const ids = orders.filter((o) => selected.has(o._id) && ['label_generated', 'processing'].includes(o.status)).map((o) => o._id);
+    const ids = tabOrders.filter((o) => selected.has(o._id) && ['label_generated', 'processing'].includes(o.status)).map((o) => o._id);
     if (!ids.length) { toast.error('Select accepted orders to download labels'); return; }
     setBulkDownloadingLabels(true);
     try {
@@ -476,7 +504,9 @@ export default function OrdersPage() {
         <div className="flex gap-2 items-center">
           <button onClick={handleSync} disabled={syncing} className="btn-secondary btn-sm">
             <ArrowPathIcon className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Syncing…' : 'Sync'}
+            {syncing
+              ? `Syncing… ${(tabCounts.pending || 0) > 0 ? `(${tabCounts.pending} pending)` : ''}`
+              : 'Sync'}
           </button>
           <div className="relative">
             <button
@@ -558,8 +588,8 @@ export default function OrdersPage() {
             <input
               className="form-input pl-9 py-2 w-full"
               placeholder="Search order ID, product, SKU…"
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
           <select
@@ -569,16 +599,16 @@ export default function OrdersPage() {
           >
             {PLATFORM_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-          {(search || platform) && (
+          {(searchInput || platform) && (
             <button
-              onClick={() => { setSearch(''); setPlatform(''); setPage(1); }}
+              onClick={() => { setSearchInput(''); setSearch(''); setPlatform(''); setPage(1); }}
               className="btn-ghost btn-sm text-gray-400 hover:text-gray-600 gap-1"
             >
               <XMarkIcon className="h-3.5 w-3.5" /> Clear
             </button>
           )}
           <div className="text-xs text-gray-400 self-center whitespace-nowrap ml-auto">
-            {loading ? 'Loading…' : `${filtered.length} order${filtered.length !== 1 ? 's' : ''}`}
+            {loading ? 'Loading…' : `${serverTotal} order${serverTotal !== 1 ? 's' : ''}`}
           </div>
         </div>
 
@@ -797,14 +827,14 @@ export default function OrdersPage() {
         </div>
 
         {/* ── Pagination ───────────────────────────────────────────── */}
-        {!loading && filtered.length > 0 && (
+        {!loading && serverTotal > 0 && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-5 py-3.5 border-t border-gray-100 bg-gray-50/50">
             <p className="text-xs text-gray-500">
               Showing{' '}
               <span className="font-semibold text-gray-700">
-                {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)}
+                {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, serverTotal)}
               </span>{' '}
-              of <span className="font-semibold text-gray-700">{filtered.length}</span> orders
+              of <span className="font-semibold text-gray-700">{serverTotal}</span> orders
             </p>
             <div className="flex items-center gap-1">
               <button disabled={page === 1} onClick={() => setPage((p) => p - 1)}

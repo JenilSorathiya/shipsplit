@@ -13,9 +13,10 @@ const {
 
 router.use(authenticate);
 
-router.get('/',       validate(v.getOrders, 'query'), ctrl.getOrders);
-router.post('/bulk-label',                                            ctrl.bulkDownloadLabels);
-router.get('/:id',                                                     ctrl.getOrder);
+router.get('/',            validate(v.getOrders, 'query'), ctrl.getOrders);
+router.get('/tab-counts',                                 ctrl.getTabCounts);  // must be before /:id
+router.post('/bulk-label',                                ctrl.bulkDownloadLabels);
+router.get('/:id',                                        ctrl.getOrder);
 router.get('/:id/label',                                              ctrl.downloadOrderLabel);
 router.post('/:id/accept',  requireActivePlan,                        ctrl.acceptOrder);
 router.post('/:id/confirm-shipped',                                    ctrl.confirmOrderShipped);

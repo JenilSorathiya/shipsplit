@@ -291,8 +291,10 @@ function PlatformsTab() {
   const [loading,     setLoading]     = useState(true);
   const [syncing,     setSyncing]     = useState({});
   const [manualForm,  setManualForm]  = useState(null); // platformId or null
-  const [tokenInput,  setTokenInput]  = useState('');
-  const [sellerInput, setSellerInput] = useState('');
+  const [tokenInput,  setTokenInput]  = useState('');   // Amazon: refresh token
+  const [sellerInput, setSellerInput] = useState('');   // Amazon: seller ID
+  const [fkApiKey,    setFkApiKey]    = useState('');   // Flipkart: API Key
+  const [fkApiSecret, setFkApiSecret] = useState('');   // Flipkart: API Secret
   const [saving,      setSaving]      = useState(false);
 
   // Check connection status for each platform
@@ -315,10 +317,25 @@ function PlatformsTab() {
     };
     fetchStatuses();
 
-    // If redirected back after Amazon OAuth, show success
+    // Handle OAuth callback redirects
     const params = new URLSearchParams(window.location.search);
-    if (params.get('connected') === 'amazon') {
+    const connected = params.get('connected');
+    const error     = params.get('error');
+
+    if (connected === 'amazon') {
       toast.success('Amazon connected successfully!');
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (connected === 'flipkart') {
+      toast.success('Flipkart connected successfully!');
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (error?.startsWith('flipkart_')) {
+      const msgs = {
+        flipkart_rejected:       'Flipkart authorization was denied.',
+        flipkart_missing_params: 'Flipkart OAuth failed — missing parameters.',
+        flipkart_invalid_state:  'Flipkart OAuth session expired. Please try again.',
+        flipkart_oauth_failed:   'Flipkart connection failed. Please try again.',
+      };
+      toast.error(msgs[error] || 'Flipkart connection failed.');
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
@@ -331,8 +348,14 @@ function PlatformsTab() {
       } catch {
         toast.error('Failed to get Amazon OAuth URL. Check your API credentials in Render.');
       }
+    } else if (platformId === 'flipkart') {
+      // Show Self Access form (API Key + Secret) — this works now.
+      // Third Party OAuth is also wired up; toggle to that when partner approval arrives.
+      setManualForm(manualForm === 'flipkart' ? null : 'flipkart');
+      setTokenInput('');
+      setSellerInput('');
     } else {
-      toast('Coming soon! Only Amazon is available right now.', { icon: '🔜' });
+      toast('Coming soon!', { icon: '🔜' });
     }
   };
 
@@ -348,9 +371,30 @@ function PlatformsTab() {
       setManualForm(null);
       setTokenInput('');
       setSellerInput('');
-      toast.success('Amazon connected via sandbox token!');
+      toast.success('Amazon connected successfully!');
     } catch (err) {
       toast.error(err?.response?.data?.message || 'Failed to save token');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleFlipkartSelfConnect = async () => {
+    if (!fkApiKey.trim())    { toast.error('Please enter your Flipkart API Key');    return; }
+    if (!fkApiSecret.trim()) { toast.error('Please enter your Flipkart API Secret'); return; }
+    setSaving(true);
+    try {
+      await api.post('/platforms/flipkart/self-connect', {
+        apiKey:    fkApiKey.trim(),
+        apiSecret: fkApiSecret.trim(),
+      });
+      setStatuses((prev) => ({ ...prev, flipkart: { isConnected: true } }));
+      setManualForm(null);
+      setFkApiKey('');
+      setFkApiSecret('');
+      toast.success('Flipkart connected successfully!');
+    } catch (err) {
+      toast.error(err?.response?.data?.message || 'Failed to connect Flipkart. Check your API Key and Secret.');
     } finally {
       setSaving(false);
     }
@@ -434,12 +478,12 @@ function PlatformsTab() {
                   <span className="hidden sm:inline">Sync</span>
                 </button>
               )}
-              {/* Amazon: show manual token option when not connected */}
+              {/* Amazon: manual token entry */}
               {!isConnected && p.id === 'amazon' && (
                 <button
                   onClick={() => { setManualForm(manualForm === p.id ? null : p.id); setTokenInput(''); setSellerInput(''); }}
                   className="btn-ghost btn-sm text-gray-500 gap-1.5"
-                  title="Enter sandbox refresh token manually"
+                  title="Enter refresh token manually"
                 >
                   <KeyIcon className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Token</span>
@@ -450,16 +494,20 @@ function PlatformsTab() {
                 disabled={loading}
                 className={isConnected ? 'btn-secondary btn-sm text-red-600 border-red-200 hover:bg-red-50' : 'btn-primary btn-sm'}
               >
-                {isConnected ? 'Disconnect' : 'Connect'}
+                {isConnected
+                  ? 'Disconnect'
+                  : p.id === 'flipkart'
+                    ? (manualForm === 'flipkart' ? 'Cancel' : 'Connect')
+                    : 'Connect'}
               </button>
             </div>
           </div>
 
-          {/* Manual token entry form (sandbox) — inside outer wrapper */}
-          {manualForm === p.id && !isConnected && (
+          {/* ── Amazon manual token form ── */}
+          {manualForm === p.id && p.id === 'amazon' && !isConnected && (
             <div className="mt-2 p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3">
               <p className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
-                <KeyIcon className="h-4 w-4" /> Enter Sandbox Refresh Token
+                <KeyIcon className="h-4 w-4" /> Enter Amazon Refresh Token
               </p>
               <div>
                 <label className="form-label text-xs">Refresh Token <span className="text-red-500">*</span></label>
@@ -472,7 +520,7 @@ function PlatformsTab() {
                 />
               </div>
               <div>
-                <label className="form-label text-xs">Seller ID <span className="text-gray-400 font-normal">(optional for sandbox)</span></label>
+                <label className="form-label text-xs">Seller ID <span className="text-gray-400 font-normal">(optional)</span></label>
                 <input
                   value={sellerInput}
                   onChange={(e) => setSellerInput(e.target.value)}
@@ -485,6 +533,47 @@ function PlatformsTab() {
                   {saving ? 'Saving…' : 'Save & Connect'}
                 </button>
                 <button onClick={() => setManualForm(null)} className="btn-ghost btn-sm">Cancel</button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Flipkart Self Access form ── */}
+          {manualForm === p.id && p.id === 'flipkart' && !isConnected && (
+            <div className="mt-2 p-4 bg-blue-50 border border-blue-200 rounded-xl space-y-3">
+              <div>
+                <p className="text-xs font-semibold text-blue-800 flex items-center gap-1.5">
+                  <KeyIcon className="h-4 w-4" /> Connect via Self Access
+                </p>
+                <p className="text-2xs text-blue-600 mt-1">
+                  Find your API Key and Secret in Flipkart Seller Hub → Manage Profile → Developer Access → Self Access.
+                </p>
+              </div>
+              <div>
+                <label className="form-label text-xs">API Key (App ID) <span className="text-red-500">*</span></label>
+                <input
+                  value={fkApiKey}
+                  onChange={(e) => setFkApiKey(e.target.value)}
+                  className="form-input text-xs font-mono"
+                  placeholder="3523b8b9b08210a7703337aa364274971745"
+                />
+              </div>
+              <div>
+                <label className="form-label text-xs">API Secret <span className="text-red-500">*</span></label>
+                <input
+                  type="password"
+                  value={fkApiSecret}
+                  onChange={(e) => setFkApiSecret(e.target.value)}
+                  className="form-input text-xs font-mono"
+                  placeholder="Your Flipkart API Secret"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={handleFlipkartSelfConnect} disabled={saving} className="btn-primary btn-sm">
+                  {saving ? 'Connecting…' : 'Connect Flipkart'}
+                </button>
+                <button onClick={() => { setManualForm(null); setFkApiKey(''); setFkApiSecret(''); }} className="btn-ghost btn-sm">
+                  Cancel
+                </button>
               </div>
             </div>
           )}
