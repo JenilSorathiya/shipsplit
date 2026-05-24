@@ -54,8 +54,13 @@ exports.exchangeAuthCode = async (code) => {
   const redirectUri = process.env.FLIPKART_REDIRECT_URI
     || `${process.env.SERVER_URL || 'https://shipsplit.onrender.com'}/api/platforms/flipkart/callback`;
 
-  const { data } = await axios.post(`${OAUTH_BASE()}/token`, null, {
-    params: { grant_type: 'authorization_code', code, redirect_uri: redirectUri },
+  const { data } = await axios.get(`${OAUTH_BASE()}/token`, {
+    params: {
+      grant_type:   'authorization_code',
+      code,
+      redirect_uri: redirectUri,
+      scope:        'Seller_Api',
+    },
     auth: {
       username: process.env.FLIPKART_CLIENT_ID,
       password: process.env.FLIPKART_CLIENT_SECRET,
@@ -64,7 +69,7 @@ exports.exchangeAuthCode = async (code) => {
   return {
     accessToken:  data.access_token,
     refreshToken: data.refresh_token,
-    expiresIn:    data.expires_in || 5184000,   // Flipkart: ~60 days
+    expiresIn:    data.expires_in || 5184000,
   };
 };
 
@@ -75,11 +80,16 @@ exports.exchangeAuthCode = async (code) => {
 
 /**
  * Obtain an access token using the seller's own API Key + Secret.
- * Flipkart Self Access uses Client Credentials grant.
+ * Flipkart Self Access uses Client Credentials grant via GET (per official docs).
+ * curl -u <appid>:<app-secret> https://api.flipkart.net/oauth-service/oauth/token
+ *   ?grant_type=client_credentials&scope=Seller_Api
  */
 exports.getSelfAccessToken = async (apiKey, apiSecret) => {
-  const { data } = await axios.post(`${OAUTH_BASE()}/token`, null, {
-    params: { grant_type: 'client_credentials' },
+  const { data } = await axios.get(`${OAUTH_BASE()}/token`, {
+    params: {
+      grant_type: 'client_credentials',
+      scope:      'Seller_Api',
+    },
     auth: {
       username: apiKey,
       password: apiSecret,
@@ -101,12 +111,13 @@ exports.getSelfAccessToken = async (apiKey, apiSecret) => {
  * - If we have apiKey + apiSecret (Self Access) → use client_credentials grant
  */
 exports.refreshAccessToken = async (platform) => {
-  // Third Party: use refresh_token
+  // Third Party: use refresh_token (GET per Flipkart docs)
   if (platform.refreshToken) {
-    const { data } = await axios.post(`${OAUTH_BASE()}/token`, null, {
+    const { data } = await axios.get(`${OAUTH_BASE()}/token`, {
       params: {
         grant_type:    'refresh_token',
         refresh_token: platform.refreshToken,
+        scope:         'Seller_Api',
       },
       auth: {
         username: process.env.FLIPKART_CLIENT_ID,
